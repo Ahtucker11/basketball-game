@@ -1,0 +1,1303 @@
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const W = 900, H = 550;
+canvas.width = W;
+canvas.height = H;
+
+// ==================== CONSTANTS ====================
+const GRAVITY = 0.4;
+const FLOOR_Y = H - 60;
+const COURT_LEFT = 40;
+const COURT_RIGHT = W - 40;
+const CENTER_X = W / 2;
+
+const HOOP_LEFT = { x: 100, y: 200, rimLeft: 75, rimRight: 125 };
+const HOOP_RIGHT = { x: W - 100, y: 200, rimLeft: W - 125, rimRight: W - 75 };
+
+const THREE_PT_LEFT = 280;
+const TWO_PT_LEFT = 190;
+const THREE_PT_RIGHT = W - 280;
+const TWO_PT_RIGHT = W - 190;
+
+const DIFFICULTY = {
+  easy: { speed: 2.0, shotMin: 20, shotRange: 60, shootDelay: 60, shootDelayRand: 60, blockChance: 0, defendAggro: 0.2, dunkChance: 0 },
+  medium: { speed: 2.8, shotMin: 40, shotRange: 40, shootDelay: 30, shootDelayRand: 40, blockChance: 0.03, defendAggro: 0.5, dunkChance: 0 },
+  hard: { speed: 3.8, shotMin: 55, shotRange: 25, shootDelay: 15, shootDelayRand: 25, blockChance: 0.08, defendAggro: 0.9, dunkChance: 0.015 },
+};
+
+// ==================== SAVE SYSTEM ====================
+function loadSave() {
+  try {
+    const d = localStorage.getItem('basketballFun');
+    if (d) {
+      const p = JSON.parse(d);
+      p.coins = p.coins || 0;
+      p.owned = p.owned || {};
+      p.owned.hats = p.owned.hats || ['none'];
+      p.owned.balls = p.owned.balls || ['default'];
+      p.owned.shirts = p.owned.shirts || ['blue'];
+      p.owned.pants = p.owned.pants || ['blue'];
+      p.equipped = p.equipped || {};
+      p.equipped.hat = p.equipped.hat || 'none';
+      p.equipped.ball = p.equipped.ball || 'default';
+      p.equipped.shirt = p.equipped.shirt || 'blue';
+      p.equipped.pants = p.equipped.pants || 'blue';
+      p.stats = p.stats || { wins: 0, losses: 0, gamesPlayed: 0, totalPoints: 0, bestStreak: 0 };
+      return p;
+    }
+  } catch (e) { }
+  return {
+    coins: 0,
+    owned: { hats: ['none'], balls: ['default'], shirts: ['blue'], pants: ['blue'] },
+    equipped: { hat: 'none', ball: 'default', shirt: 'blue', pants: 'blue' },
+    stats: { wins: 0, losses: 0, gamesPlayed: 0, totalPoints: 0, bestStreak: 0 },
+  };
+}
+function writeSave() {
+  try { localStorage.setItem('basketballFun', JSON.stringify(save)); } catch (e) { }
+}
+let save = loadSave();
+
+// ==================== SHOP ITEMS ====================
+const SHOP = {
+  hats: [
+    { id: 'none', name: 'None', price: 0 },
+    { id: 'cap', name: 'Cap', price: 5 },
+    { id: 'mohawk', name: 'Mohawk', price: 8 },
+    { id: 'crown', name: 'Crown', price: 10 },
+    { id: 'wizard', name: 'Wizard', price: 15 },
+    { id: 'ninja', name: 'Ninja', price: 20 },
+  ],
+  balls: [
+    { id: 'default', name: 'Classic', price: 0, color: '#ff6b00', line: '#cc5500' },
+    { id: 'slime', name: 'Slime', price: 6, color: '#06d6a0', line: '#04a87d' },
+    { id: 'bubble', name: 'Bubble', price: 6, color: '#f72585', line: '#c41e6a' },
+    { id: 'ice', name: 'Ice', price: 8, color: '#4d96ff', line: '#3070cc' },
+    { id: 'gold', name: 'Gold', price: 20, color: '#ffd93d', line: '#ccaa00' },
+    { id: 'rainbow', name: 'Rainbow', price: 25, color: 'rainbow', line: '#888' },
+  ],
+  shirts: [
+    { id: 'blue', name: 'Blue', price: 0, color: '#4cc9f0' },
+    { id: 'red', name: 'Red', price: 4, color: '#e94560' },
+    { id: 'green', name: 'Green', price: 4, color: '#06d6a0' },
+    { id: 'purple', name: 'Purple', price: 4, color: '#9b5de5' },
+    { id: 'orange', name: 'Orange', price: 4, color: '#ff6b00' },
+    { id: 'gold', name: 'Gold', price: 12, color: '#ffd93d' },
+  ],
+  pants: [
+    { id: 'blue', name: 'Blue', price: 0, color: '#4cc9f0' },
+    { id: 'black', name: 'Black', price: 3, color: '#333' },
+    { id: 'white', name: 'White', price: 3, color: '#eee' },
+    { id: 'red', name: 'Red', price: 4, color: '#e94560' },
+    { id: 'gold', name: 'Gold', price: 10, color: '#ffd93d' },
+  ],
+};
+
+function getEquipped() {
+  const shirt = SHOP.shirts.find(s => s.id === save.equipped.shirt) || SHOP.shirts[0];
+  const pants = SHOP.pants.find(p => p.id === save.equipped.pants) || SHOP.pants[0];
+  const b = SHOP.balls.find(b => b.id === save.equipped.ball) || SHOP.balls[0];
+  return { shirt, pants, ball: b, hat: save.equipped.hat };
+}
+
+function getBallColor() {
+  const eq = getEquipped();
+  if (eq.ball.color === 'rainbow') return `hsl(${(Date.now() / 10) % 360}, 100%, 55%)`;
+  return eq.ball.color;
+}
+function getBallLineColor() {
+  const eq = getEquipped();
+  if (eq.ball.color === 'rainbow') return `hsl(${((Date.now() / 10) + 40) % 360}, 80%, 40%)`;
+  return eq.ball.line;
+}
+
+// ==================== GAME STATE ====================
+let gameState = 'menu'; // menu, shop, stats, countdown, playing, gameover
+let winScore = 10;
+let difficulty = 'medium';
+let winner = '';
+let coinsEarnedThisGame = 0;
+let shopTab = 'hats';
+let gameMode = '1p';
+
+// Countdown
+let countdownTimer = 0;
+
+// Streak / On-fire
+let playerStreak = 0;
+let cpuStreak = 0;
+let playerOnFire = false;
+let cpuOnFire = false;
+
+// CPU outfit (randomized each game)
+let cpuOutfit = { hat: 'none', shirt: '#f72585' };
+function randomCpuOutfit() {
+  const hats = ['none', 'none', 'cap', 'mohawk', 'crown', 'wizard', 'ninja'];
+  const shirts = ['#f72585', '#e94560', '#ff6b00', '#9b5de5', '#06d6a0', '#4d96ff', '#ffd93d'];
+  return {
+    hat: hats[Math.floor(Math.random() * hats.length)],
+    shirt: shirts[Math.floor(Math.random() * shirts.length)],
+  };
+}
+
+// ==================== UI SYSTEM ====================
+let clickAreas = [];
+let mouseX = 0, mouseY = 0;
+
+canvas.addEventListener('mousemove', (e) => {
+  const rect = canvas.getBoundingClientRect();
+  mouseX = (e.clientX - rect.left) * (W / rect.width);
+  mouseY = (e.clientY - rect.top) * (H / rect.height);
+});
+
+canvas.addEventListener('click', (e) => {
+  const rect = canvas.getBoundingClientRect();
+  const mx = (e.clientX - rect.left) * (W / rect.width);
+  const my = (e.clientY - rect.top) * (H / rect.height);
+  for (const area of clickAreas) {
+    if (mx >= area.x && mx <= area.x + area.w && my >= area.y && my <= area.y + area.h) {
+      area.onClick();
+      return;
+    }
+  }
+});
+
+function addClick(x, y, w, h, fn) { clickAreas.push({ x, y, w, h, onClick: fn }); }
+function isHover(x, y, w, h) { return mouseX >= x && mouseX <= x + w && mouseY >= y && mouseY <= y + h; }
+
+// ==================== INPUT ====================
+const keys = {};
+const GAME_KEYS = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Space', 'KeyW', 'KeyA', 'KeyS', 'KeyD'];
+window.addEventListener('keydown', e => { keys[e.code] = true; if (GAME_KEYS.includes(e.code)) e.preventDefault(); });
+window.addEventListener('keyup', e => { keys[e.code] = false; if (GAME_KEYS.includes(e.code)) e.preventDefault(); });
+
+// ==================== GAME OBJECTS ====================
+const ball = {
+  x: CENTER_X, y: FLOOR_Y - 20, vx: 0, vy: 0, radius: 12,
+  owner: null, inAir: false, scored: false,
+  rotation: 0, bounceCount: 0, lastShooter: null, lastShootX: 0,
+};
+
+const player = {
+  x: CENTER_X - 100, y: FLOOR_Y, w: 36, h: 50, vx: 0, vy: 0,
+  speed: 3, jumpPower: -10, onGround: true, hasBall: true,
+  charging: false, power: 0, maxPower: 100,
+  facingRight: true, score: 0, animFrame: 0, animTimer: 0, bounceY: 0,
+  airFrames: 0, jumpShotFired: false,
+};
+let spaceWasDown = false;
+
+const cpu = {
+  x: CENTER_X + 100, y: FLOOR_Y, w: 36, h: 50, vx: 0, vy: 0,
+  speed: 3, jumpPower: -10, onGround: true, hasBall: false, score: 0,
+  facingRight: false, animFrame: 0, animTimer: 0, bounceY: 0,
+  aiTimer: 0, shootTimer: 0, targetX: 0,
+  charging: false, power: 0, airFrames: 0, jumpShotFired: false, wasShootDown: false
+};
+
+// ==================== CROWD ====================
+let crowd = [];
+let crowdCheerTimer = 0;
+
+function generateCrowd() {
+  crowd = [];
+  const shirtColors = ['#e94560', '#f72585', '#4cc9f0', '#06d6a0', '#9b5de5', '#ff6b00', '#ffd93d', '#4d96ff', '#ff85a1', '#80ffdb', '#fff', '#ffaa00'];
+  const skinTones = ['#ffd5a5', '#e8b88a', '#c68c53', '#8d5524', '#ffdbac', '#f1c27d'];
+  const rows = [
+    { y: 28, count: 28, scale: 0.5 },
+    { y: 52, count: 24, scale: 0.6 },
+    { y: 82, count: 20, scale: 0.72 },
+  ];
+  for (const row of rows) {
+    const spacing = (W - 80) / row.count;
+    for (let i = 0; i < row.count; i++) {
+      crowd.push({
+        x: 50 + i * spacing + (Math.random() - 0.5) * spacing * 0.4,
+        y: row.y + (Math.random() - 0.5) * 6,
+        scale: row.scale + (Math.random() - 0.5) * 0.06,
+        shirt: shirtColors[Math.floor(Math.random() * shirtColors.length)],
+        skin: skinTones[Math.floor(Math.random() * skinTones.length)],
+        phase: Math.random() * Math.PI * 2,
+        bobSpeed: 1.5 + Math.random() * 1.5,
+        hasHat: Math.random() < 0.25,
+        hatColor: shirtColors[Math.floor(Math.random() * shirtColors.length)],
+        armUp: false,
+      });
+    }
+  }
+}
+
+function drawCrowd() {
+  const cheering = crowdCheerTimer > 0;
+  for (const c of crowd) {
+    const s = c.scale;
+    const bob = Math.sin(Date.now() / (300 / c.bobSpeed) + c.phase) * 2 * s;
+    const cheerBob = cheering ? Math.abs(Math.sin(Date.now() / 100 + c.phase)) * 6 * s : 0;
+    const y = c.y + bob - cheerBob;
+    const x = c.x;
+    ctx.save();
+    ctx.translate(x, y);
+    // Body
+    ctx.fillStyle = c.shirt;
+    ctx.fillRect(-6 * s, 0, 12 * s, 10 * s);
+    // Head
+    ctx.fillStyle = c.skin;
+    ctx.beginPath(); ctx.arc(0, -4 * s, 5 * s, 0, Math.PI * 2); ctx.fill();
+    // Arms
+    if (cheering && Math.sin(Date.now() / 80 + c.phase * 3) > -0.3) {
+      // Arms up cheering
+      ctx.fillStyle = c.skin;
+      ctx.fillRect(-10 * s, -8 * s, 4 * s, 10 * s);
+      ctx.fillRect(6 * s, -8 * s, 4 * s, 10 * s);
+    } else {
+      ctx.fillStyle = c.skin;
+      ctx.fillRect(-10 * s, 0, 4 * s, 7 * s);
+      ctx.fillRect(6 * s, 0, 4 * s, 7 * s);
+    }
+    // Hat
+    if (c.hasHat) {
+      ctx.fillStyle = c.hatColor;
+      ctx.fillRect(-6 * s, -9 * s, 12 * s, 3 * s);
+      ctx.fillRect(-3 * s, -12 * s, 6 * s, 4 * s);
+    }
+    ctx.restore();
+  }
+}
+
+// ==================== PARTICLES & FLOATING TEXT ====================
+let particles = [];
+let floatingTexts = [];
+let screenShake = 0;
+let scoreFlash = '';
+let scoreFlashTimer = 0;
+let resetTimer = 0;
+let whoGetsball = 'player';
+
+function spawnParticles(x, y, color, count) {
+  for (let i = 0; i < count; i++)
+    particles.push({ x, y, vx: (Math.random() - .5) * 8, vy: (Math.random() - 1) * 6, life: 1, color, size: Math.random() * 6 + 2 });
+}
+function spawnConfetti(x, y) {
+  const c = ['#ff6b6b', '#ffd93d', '#6bcb77', '#4d96ff', '#ff6b00', '#f72585', '#4cc9f0'];
+  for (let i = 0; i < 30; i++)
+    particles.push({ x, y, vx: (Math.random() - .5) * 12, vy: (Math.random() - 1) * 10, life: 1.5, color: c[Math.floor(Math.random() * c.length)], size: Math.random() * 8 + 3 });
+}
+function spawnCoinParticles(x, y) {
+  for (let i = 0; i < 8; i++)
+    particles.push({ x, y, vx: (Math.random() - .5) * 6, vy: -Math.random() * 5 - 2, life: 1.2, color: '#ffd93d', size: Math.random() * 5 + 4 });
+}
+function addFloat(x, y, text, color) {
+  floatingTexts.push({ x, y, text, color, life: 80 });
+}
+function updateParticles() {
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i]; p.vy += 0.15; p.x += p.vx; p.y += p.vy; p.life -= 0.02;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+  for (let i = floatingTexts.length - 1; i >= 0; i--) {
+    floatingTexts[i].y -= 0.8; floatingTexts[i].life--;
+    if (floatingTexts[i].life <= 0) floatingTexts.splice(i, 1);
+  }
+}
+
+// ==================== GAME LOGIC ====================
+function getDiff() { return DIFFICULTY[difficulty]; }
+
+function startGame() {
+  gameState = 'countdown';
+  countdownTimer = 0;
+  if (crowd.length === 0) generateCrowd();
+  player.score = 0;
+  cpu.score = 0;
+  coinsEarnedThisGame = 0;
+  winner = '';
+  particles = [];
+  floatingTexts = [];
+  screenShake = 0;
+  scoreFlash = '';
+  scoreFlashTimer = 0;
+  playerStreak = 0;
+  cpuStreak = 0;
+  playerOnFire = false;
+  cpuOnFire = false;
+  cpuOutfit = randomCpuOutfit();
+  cpu.speed = getDiff().speed;
+  save.stats.gamesPlayed++;
+  writeSave();
+  resetBall('player');
+}
+
+function resetBall(giver) {
+  ball.inAir = false; ball.scored = false; ball.vx = 0; ball.vy = 0;
+  ball.bounceCount = 0; ball.lastShooter = null;
+  if (giver === 'player') {
+    ball.owner = 'player'; player.hasBall = true; cpu.hasBall = false;
+    player.x = CENTER_X - 20; player.y = FLOOR_Y; cpu.x = CENTER_X + 150;
+  } else {
+    ball.owner = 'cpu'; cpu.hasBall = true; player.hasBall = false;
+    cpu.x = CENTER_X + 20; cpu.y = FLOOR_Y; player.x = CENTER_X - 150;
+  }
+  player.charging = false; player.power = 0;
+}
+
+function shootBall(shooter, power, targetHoop) {
+  const sx = shooter.x, sy = shooter.y - shooter.h - ball.radius;
+  const dx = targetHoop.x - sx, signDx = Math.sign(dx) || 1;
+  const peakY = targetHoop.y - 80;
+  const hN = sy - peakY; // positive = below peak, negative = above peak
+  let vy, tT;
+  if (hN > 10) {
+    // Normal shot from below peak
+    vy = -Math.sqrt(2 * GRAVITY * hN);
+    const tP = Math.abs(vy) / GRAVITY;
+    const tH = Math.sqrt(Math.max(2 * (targetHoop.y - peakY) / GRAVITY, 0));
+    tT = tP + tH;
+  } else {
+    // Elevated jump shot (at or above peak) - gentle arc to hoop
+    vy = -3;
+    // Solve: sy + vy*t + 0.5*g*t^2 = targetHoop.y for t
+    const a = 0.5 * GRAVITY, b = vy, c = sy - targetHoop.y;
+    const disc = b * b - 4 * a * c;
+    tT = disc > 0 ? (-b + Math.sqrt(disc)) / (2 * a) : 30;
+  }
+  const nVx = Math.abs(dx) / Math.max(tT, 1);
+  const pF = 0.3 + (power / 100) * 1.0;
+  ball.x = sx; ball.y = sy; ball.vx = signDx * nVx * pF; ball.vy = vy;
+  ball.inAir = true; ball.owner = null; ball.scored = false; ball.bounceCount = 0;
+  ball.lastShooter = shooter === player ? 'player' : 'cpu';
+  ball.lastShootX = sx; shooter.hasBall = false;
+  spawnParticles(sx, sy, getBallColor(), 5);
+  audio.shoot();
+}
+
+function performDunk(dunker, hoop) {
+  ball.x = hoop.x; ball.y = hoop.y + 5;
+  ball.vx = 0; ball.vy = 8;
+  ball.inAir = true; ball.owner = null; ball.scored = false; ball.bounceCount = 0;
+  ball.lastShooter = dunker === player ? 'player' : 'cpu';
+  ball.lastShootX = dunker.x; dunker.hasBall = false;
+  screenShake = 15;
+  spawnConfetti(hoop.x, hoop.y);
+  audio.jump();
+  addFloat(hoop.x, hoop.y - 60, 'SLAM DUNK!', '#ff6b6b');
+}
+
+function getPointValue(sx, hoop) {
+  if (hoop === HOOP_RIGHT) {
+    if (sx > TWO_PT_RIGHT) return 1; if (sx > THREE_PT_RIGHT) return 2; return 3;
+  } else {
+    if (sx < TWO_PT_LEFT) return 1; if (sx < THREE_PT_LEFT) return 2; return 3;
+  }
+}
+
+function checkScore() {
+  if (ball.scored) return;
+
+  // Right hoop (player)
+  const rh = HOOP_RIGHT;
+  if (ball.x > rh.rimLeft && ball.x < rh.rimRight && ball.y > rh.y - 5 && ball.y < rh.y + 15 && ball.vy > 0) {
+    ball.scored = true;
+    const pts = getPointValue(ball.lastShootX || ball.x, HOOP_RIGHT);
+    player.score += pts;
+    audio.score(); audio.cheer();
+    playerStreak++; cpuStreak = 0; cpuOnFire = false;
+    if (playerStreak >= 3 && !playerOnFire) {
+      playerOnFire = true;
+      addFloat(CENTER_X, 180, 'ON FIRE!', '#ff6b00');
+      screenShake = 12;
+    }
+    const fireBonus = playerOnFire ? 1 : 0;
+    const totalCoins = pts + fireBonus;
+    save.coins += totalCoins; coinsEarnedThisGame += totalCoins;
+    save.stats.totalPoints += pts;
+    if (playerStreak > save.stats.bestStreak) save.stats.bestStreak = playerStreak;
+    writeSave();
+    scoreFlash = `+${pts}!`; scoreFlashTimer = 60; screenShake = Math.max(screenShake, 10);
+    crowdCheerTimer = 120;
+    spawnConfetti(rh.x, rh.y); spawnCoinParticles(rh.x, rh.y - 30);
+    addFloat(rh.x, rh.y - 50, `+${totalCoins} coin${totalCoins > 1 ? 's' : ''}`, '#ffd93d');
+    if (fireBonus) addFloat(rh.x + 60, rh.y - 30, 'fire bonus!', '#ff6b00');
+    whoGetsball = 'cpu'; resetTimer = 90;
+    if (player.score >= winScore) {
+      gameState = 'gameover'; winner = 'player';
+      save.stats.wins++; writeSave();
+      spawnConfetti(W / 2, H / 2); spawnConfetti(W / 2 - 100, H / 2); spawnConfetti(W / 2 + 100, H / 2);
+    }
+  }
+
+  // Left hoop (CPU)
+  const lh = HOOP_LEFT;
+  if (ball.x > lh.rimLeft && ball.x < lh.rimRight && ball.y > lh.y - 5 && ball.y < lh.y + 15 && ball.vy > 0) {
+    ball.scored = true;
+    const pts = getPointValue(ball.lastShootX || ball.x, HOOP_LEFT);
+    cpu.score += pts;
+    audio.score();
+    cpuStreak++; playerStreak = 0; playerOnFire = false;
+    if (cpuStreak >= 3 && !cpuOnFire) {
+      cpuOnFire = true;
+      addFloat(CENTER_X, 180, 'CPU ON FIRE!', '#ff6b00');
+    }
+    scoreFlash = `CPU +${pts}!`; scoreFlashTimer = 60; screenShake = 8;
+    crowdCheerTimer = 120;
+    spawnConfetti(lh.x, lh.y);
+    whoGetsball = 'player'; resetTimer = 90;
+    if (cpu.score >= winScore) {
+      gameState = 'gameover'; winner = 'cpu';
+      save.stats.losses++; writeSave();
+    }
+  }
+}
+
+function checkBlock(p, who) {
+  if (!ball.inAir || ball.scored || ball.owner || ball.lastShooter === who) return;
+  if (Math.abs(ball.x - p.x) < 25 && Math.abs(ball.y - (p.y - p.h / 2)) < 35) {
+    ball.vx *= -0.6;
+    ball.vy = -Math.abs(ball.vy) * 0.4 - 2;
+    ball.lastShooter = null;
+    screenShake = 6;
+    spawnParticles(ball.x, ball.y, '#fff', 8);
+    audio.rim();
+    addFloat(ball.x, ball.y - 30, 'BLOCKED!', '#ff6b6b');
+  }
+}
+
+// ==================== UPDATE ====================
+function updateBall() {
+  if (ball.owner === 'player') { ball.x = player.x; ball.y = player.y - player.h - ball.radius; return; }
+  if (ball.owner === 'cpu') { ball.x = cpu.x; ball.y = cpu.y - cpu.h - ball.radius; return; }
+
+  ball.vy += GRAVITY; ball.x += ball.vx; ball.y += ball.vy; ball.rotation += ball.vx * 0.05;
+
+  // Ball trail
+  if (Math.random() < 0.4)
+    particles.push({ x: ball.x, y: ball.y, vx: 0, vy: 0, life: 0.35, color: getBallColor(), size: ball.radius * 0.5 });
+  // Fire trail
+  if ((ball.lastShooter === 'player' && playerOnFire) || (ball.lastShooter === 'cpu' && cpuOnFire))
+    particles.push({ x: ball.x + (Math.random() - .5) * 10, y: ball.y + (Math.random() - .5) * 10, vx: (Math.random() - .5) * 2, vy: -Math.random() * 3, life: 0.5, color: Math.random() > .5 ? '#ff6b00' : '#ffd93d', size: Math.random() * 6 + 3 });
+
+  if (ball.y + ball.radius > FLOOR_Y) {
+    ball.y = FLOOR_Y - ball.radius; ball.vy *= -0.6; ball.vx *= 0.8; ball.bounceCount++;
+    if (Math.abs(ball.vy) < 1) ball.vy = 0;
+    spawnParticles(ball.x, FLOOR_Y, '#ffaa00', 3);
+    audio.bounce();
+  }
+  if (ball.x - ball.radius < COURT_LEFT) { ball.x = COURT_LEFT + ball.radius; ball.vx *= -0.7; }
+  if (ball.x + ball.radius > COURT_RIGHT) { ball.x = COURT_RIGHT - ball.radius; ball.vx *= -0.7; }
+  if (ball.y - ball.radius < 0) { ball.y = ball.radius; ball.vy *= -0.5; }
+
+  // Backboard
+  if (ball.x > W - 75 && ball.x < W - 65 && ball.y > 150 && ball.y < 220) { ball.x = W - 75; ball.vx *= -0.7; spawnParticles(ball.x, ball.y, '#fff', 3); }
+  if (ball.x < 75 && ball.x > 65 && ball.y > 150 && ball.y < 220) { ball.x = 75; ball.vx *= -0.7; spawnParticles(ball.x, ball.y, '#fff', 3); }
+
+  // Rim - right
+  const rrL = HOOP_RIGHT.rimLeft, rrR = HOOP_RIGHT.rimRight, rrY = HOOP_RIGHT.y;
+  if (ball.y > rrY - 8 && ball.y < rrY + 8) {
+    if (Math.abs(ball.x - rrL) < ball.radius + 4) { ball.vx = Math.abs(ball.vx) * -0.5; ball.vy *= 0.5; spawnParticles(rrL, rrY, '#e94560', 3); audio.rim(); }
+    if (Math.abs(ball.x - rrR) < ball.radius + 4) { ball.vx = Math.abs(ball.vx) * 0.5; ball.vy *= 0.5; spawnParticles(rrR, rrY, '#e94560', 3); audio.rim(); }
+  }
+  // Rim - left
+  const rlL = HOOP_LEFT.rimLeft, rlR = HOOP_LEFT.rimRight, rlY = HOOP_LEFT.y;
+  if (ball.y > rlY - 8 && ball.y < rlY + 8) {
+    if (Math.abs(ball.x - rlL) < ball.radius + 4) { ball.vx = Math.abs(ball.vx) * -0.5; ball.vy *= 0.5; spawnParticles(rlL, rlY, '#e94560', 3); audio.rim(); }
+    if (Math.abs(ball.x - rlR) < ball.radius + 4) { ball.vx = Math.abs(ball.vx) * 0.5; ball.vy *= 0.5; spawnParticles(rlR, rlY, '#e94560', 3); audio.rim(); }
+  }
+
+  checkScore();
+  checkBlock(player, 'player');
+  checkBlock(cpu, 'cpu');
+
+  // Pickup
+  if (!ball.scored) {
+    if (Math.abs(ball.x - player.x) < 35 && Math.abs(ball.y - (player.y - player.h / 2)) < 50 && !player.hasBall) {
+      ball.owner = 'player'; player.hasBall = true; ball.inAir = false;
+      spawnParticles(player.x, player.y - player.h, getEquipped().shirt.color, 5);
+    }
+    if (Math.abs(ball.x - cpu.x) < 35 && Math.abs(ball.y - (cpu.y - cpu.h / 2)) < 50 && !cpu.hasBall) {
+      ball.owner = 'cpu'; cpu.hasBall = true; ball.inAir = false;
+      spawnParticles(cpu.x, cpu.y - cpu.h, cpuOutfit.shirt, 5);
+    }
+  }
+}
+
+function updatePlayer() {
+  if (keys['ArrowLeft']) { player.vx = -player.speed; player.facingRight = false; }
+  else if (keys['ArrowRight']) { player.vx = player.speed; player.facingRight = true; }
+  else player.vx *= 0.7;
+
+  if (keys['ArrowUp'] && player.onGround) {
+    player.vy = player.jumpPower; player.onGround = false;
+    player.airFrames = 0; player.jumpShotFired = false;
+    spawnParticles(player.x, player.y, '#fff', 3);
+    audio.jump();
+  }
+
+  // Track airborne time
+  if (!player.onGround) player.airFrames++;
+  else { player.airFrames = 0; player.jumpShotFired = false; }
+
+  const spaceJustPressed = keys['Space'] && !spaceWasDown;
+
+  if (keys['Space'] && player.hasBall) {
+    const dH = Math.abs(player.x - HOOP_RIGHT.x);
+    if (!player.onGround && dH < 55) {
+      // Dunk: in the air + very close to hoop
+      performDunk(player, HOOP_RIGHT);
+      player.charging = false; player.power = 0;
+    } else if (!player.onGround && spaceJustPressed && !player.jumpShotFired && player.airFrames > 3) {
+      // Jump shot: press Space while airborne (must be a fresh press, airborne 3+ frames)
+      player.jumpShotFired = true;
+      const jumpShotPower = 55;
+      shootBall(player, jumpShotPower, HOOP_RIGHT);
+      player.charging = false; player.power = 0;
+      addFloat(player.x, player.y - player.h - 30, 'JUMP SHOT!', '#4cc9f0');
+    } else if (player.onGround || player.charging) {
+      // Ground charge (or continue charging if jumped while charging)
+      player.charging = true;
+      player.power = Math.min(player.power + 2.5, player.maxPower);
+    }
+  } else if (!keys['Space'] && player.charging) {
+    // Release charged shot (works on ground or air if started charging on ground)
+    const shotPower = Math.max(player.power, 20);
+    shootBall(player, shotPower, HOOP_RIGHT);
+    player.charging = false; player.power = 0;
+  }
+
+  spaceWasDown = !!keys['Space'];
+
+  player.vy += GRAVITY; player.x += player.vx; player.y += player.vy;
+  if (player.y > FLOOR_Y) { player.y = FLOOR_Y; player.vy = 0; player.onGround = true; }
+  player.x = Math.max(COURT_LEFT + player.w / 2, Math.min(COURT_RIGHT - player.w / 2, player.x));
+
+  player.animTimer++;
+  if (Math.abs(player.vx) > 0.5) {
+    if (player.animTimer % 8 === 0) {
+      player.animFrame = (player.animFrame + 1) % 4;
+      if (player.onGround && (player.animFrame === 1 || player.animFrame === 3)) audio.dribble();
+    }
+  }
+  else player.animFrame = 0;
+  player.bounceY = (player.onGround && Math.abs(player.vx) < 0.5) ? Math.sin(Date.now() / 300) * 2 : 0;
+
+  // Fire particles
+  if (playerOnFire && Math.random() < 0.3)
+    particles.push({ x: player.x + (Math.random() - .5) * 20, y: player.y - player.h - 5, vx: (Math.random() - .5) * 2, vy: -Math.random() * 3 - 1, life: 0.4, color: Math.random() > .5 ? '#ff6b00' : '#ffd93d', size: Math.random() * 5 + 3 });
+}
+
+function updateCPU() {
+  if (gameMode === '2p') {
+    // Player 2 Controls
+    if (keys['KeyA']) { cpu.vx = -cpu.speed; cpu.facingRight = false; }
+    else if (keys['KeyD']) { cpu.vx = cpu.speed; cpu.facingRight = true; }
+    else cpu.vx *= 0.7;
+
+    if (keys['KeyW'] && cpu.onGround) {
+      cpu.vy = cpu.jumpPower; cpu.onGround = false;
+      audio.jump();
+    }
+
+    const shootKey = keys['KeyS'];
+    const shootJustPressed = shootKey && !cpu.wasShootDown;
+
+    if (shootKey && cpu.hasBall) {
+      const dH = Math.abs(cpu.x - HOOP_LEFT.x);
+      if (!cpu.onGround && dH < 55) {
+        performDunk(cpu, HOOP_LEFT);
+        cpu.charging = false; cpu.power = 0;
+      } else if (!cpu.onGround && shootJustPressed && !cpu.jumpShotFired && cpu.airFrames > 3) {
+        cpu.jumpShotFired = true;
+        shootBall(cpu, 55, HOOP_LEFT);
+        cpu.charging = false; cpu.power = 0;
+        addFloat(cpu.x, cpu.y - cpu.h - 30, 'JUMP SHOT!', cpuOutfit.shirt);
+      } else if (cpu.onGround || cpu.charging) {
+        cpu.charging = true;
+        cpu.power = Math.min((cpu.power || 0) + 2.5, 100);
+      }
+    } else if (!shootKey && cpu.charging) {
+      const shotPower = Math.max(cpu.power, 20);
+      shootBall(cpu, shotPower, HOOP_LEFT);
+      cpu.charging = false; cpu.power = 0;
+    }
+    cpu.wasShootDown = !!shootKey;
+
+    // Track airborne time
+    if (!cpu.onGround) cpu.airFrames++;
+    else { cpu.airFrames = 0; cpu.jumpShotFired = false; }
+
+    cpu.vy += GRAVITY; cpu.x += cpu.vx; cpu.y += cpu.vy;
+    if (cpu.y > FLOOR_Y) { cpu.y = FLOOR_Y; cpu.vy = 0; cpu.onGround = true; }
+    cpu.x = Math.max(COURT_LEFT + cpu.w / 2, Math.min(COURT_RIGHT - cpu.w / 2, cpu.x));
+
+    cpu.animTimer++;
+    if (Math.abs(cpu.vx) > 0.5) {
+      if (cpu.animTimer % 8 === 0) {
+        cpu.animFrame = (cpu.animFrame + 1) % 4;
+        if (cpu.onGround && (cpu.animFrame === 1 || cpu.animFrame === 3)) audio.dribble();
+      }
+    } else cpu.animFrame = 0;
+    cpu.bounceY = (cpu.onGround && Math.abs(cpu.vx) < 0.5) ? Math.sin(Date.now() / 300 + 1) * 2 : 0;
+
+    // Fire particles
+    if (cpuOnFire && Math.random() < 0.3)
+      particles.push({ x: cpu.x + (Math.random() - .5) * 20, y: cpu.y - cpu.h - 5, vx: (Math.random() - .5) * 2, vy: -Math.random() * 3 - 1, life: 0.4, color: Math.random() > .5 ? '#ff6b00' : '#ffd93d', size: Math.random() * 5 + 3 });
+
+    return;
+  }
+
+  cpu.aiTimer++;
+  const diff = getDiff();
+  cpu.speed = diff.speed;
+
+  if (cpu.hasBall) {
+    // Move to shooting position
+    const shootZone = THREE_PT_LEFT + 40;
+    if (cpu.x > shootZone + 10) { cpu.vx = -cpu.speed; cpu.facingRight = false; }
+    else if (cpu.x < shootZone - 10) { cpu.vx = cpu.speed; cpu.facingRight = true; }
+    else {
+      cpu.vx *= 0.5;
+      cpu.shootTimer++;
+      if (cpu.shootTimer > diff.shootDelay + Math.random() * diff.shootDelayRand) {
+        cpu.facingRight = false;
+        ball.lastShootX = cpu.x;
+        const power = diff.shotMin + Math.random() * diff.shotRange;
+        shootBall(cpu, power, HOOP_LEFT);
+        cpu.shootTimer = 0;
+      }
+    }
+
+    // Hard: attempt dunks when close to hoop
+    if (diff.dunkChance > 0) {
+      const dH = Math.abs(cpu.x - HOOP_LEFT.x);
+      if (dH < 80 && cpu.onGround && Math.random() < diff.dunkChance) {
+        cpu.vy = cpu.jumpPower; cpu.onGround = false;
+        audio.jump();
+      }
+      if (!cpu.onGround && dH < 55 && cpu.hasBall) {
+        performDunk(cpu, HOOP_LEFT);
+      }
+    }
+  } else if (!ball.scored && ball.owner === null) {
+    // Chase ball
+    if (ball.x < cpu.x - 10) { cpu.vx = -cpu.speed; cpu.facingRight = false; }
+    else if (ball.x > cpu.x + 10) { cpu.vx = cpu.speed; cpu.facingRight = true; }
+    else cpu.vx *= 0.5;
+
+    // Jump to block player shots
+    if (ball.inAir && ball.lastShooter === 'player' && cpu.onGround) {
+      const bd = Math.abs(ball.x - cpu.x);
+      if (bd < 70 && ball.y < cpu.y - 20 && Math.random() < diff.blockChance) {
+        cpu.vy = cpu.jumpPower; cpu.onGround = false;
+        audio.jump();
+      }
+    }
+  } else if (ball.owner === 'player') {
+    // Defend: position between player and right hoop
+    const defendX = player.x + (HOOP_RIGHT.x - player.x) * diff.defendAggro * 0.4;
+    const clampedDefend = Math.max(player.x + 30, Math.min(COURT_RIGHT - 30, defendX));
+    if (cpu.x < clampedDefend - 15) { cpu.vx = cpu.speed * 0.7; cpu.facingRight = true; }
+    else if (cpu.x > clampedDefend + 15) { cpu.vx = -cpu.speed * 0.7; cpu.facingRight = false; }
+    else cpu.vx *= 0.5;
+
+    // On hard: jump when player is charging nearby
+    if (diff.defendAggro > 0.7 && player.charging && cpu.onGround) {
+      const distToPlayer = Math.abs(cpu.x - player.x);
+      if (distToPlayer < 80 && Math.random() < 0.02) {
+        cpu.vy = cpu.jumpPower; cpu.onGround = false;
+        audio.jump();
+      }
+    }
+  } else {
+    // Wander
+    if (cpu.aiTimer % 120 === 0) cpu.targetX = CENTER_X + 50 + Math.random() * 200;
+    if (cpu.x < cpu.targetX - 15) { cpu.vx = cpu.speed * 0.6; cpu.facingRight = true; }
+    else if (cpu.x > cpu.targetX + 15) { cpu.vx = -cpu.speed * 0.6; cpu.facingRight = false; }
+    else cpu.vx *= 0.5;
+  }
+
+  cpu.vy += GRAVITY; cpu.x += cpu.vx; cpu.y += cpu.vy;
+  if (cpu.y > FLOOR_Y) { cpu.y = FLOOR_Y; cpu.vy = 0; cpu.onGround = true; }
+  cpu.x = Math.max(COURT_LEFT + cpu.w / 2, Math.min(COURT_RIGHT - cpu.w / 2, cpu.x));
+
+  cpu.animTimer++;
+  if (Math.abs(cpu.vx) > 0.5) {
+    if (cpu.animTimer % 8 === 0) {
+      cpu.animFrame = (cpu.animFrame + 1) % 4;
+      if (cpu.onGround && (cpu.animFrame === 1 || cpu.animFrame === 3)) audio.dribble();
+    }
+  } else cpu.animFrame = 0;
+  cpu.bounceY = (cpu.onGround && Math.abs(cpu.vx) < 0.5) ? Math.sin(Date.now() / 300 + 1) * 2 : 0;
+
+  // Fire particles for CPU
+  if (cpuOnFire && Math.random() < 0.3)
+    particles.push({ x: cpu.x + (Math.random() - .5) * 20, y: cpu.y - cpu.h - 5, vx: (Math.random() - .5) * 2, vy: -Math.random() * 3 - 1, life: 0.4, color: Math.random() > .5 ? '#ff6b00' : '#ffd93d', size: Math.random() * 5 + 3 });
+}
+
+// ==================== DRAWING ====================
+function drawCourt() {
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, '#0f3460'); grad.addColorStop(1, '#16213e');
+  ctx.fillStyle = grad; ctx.fillRect(0, 0, W, H);
+
+  // Bleacher background
+  ctx.fillStyle = '#1a2744';
+  ctx.fillRect(0, 10, W, 100);
+  ctx.fillStyle = '#15203a';
+  ctx.fillRect(0, 40, W, 70);
+  ctx.fillStyle = '#111b32';
+  ctx.fillRect(0, 70, W, 40);
+  // Bleacher rows (seats)
+  ctx.fillStyle = '#2a3a5c'; ctx.fillRect(0, 35, W, 3);
+  ctx.fillStyle = '#2a3a5c'; ctx.fillRect(0, 62, W, 3);
+  ctx.fillStyle = '#2a3a5c'; ctx.fillRect(0, 95, W, 3);
+
+  // Draw crowd
+  if (crowd.length > 0) drawCrowd();
+
+  ctx.fillStyle = '#fff';
+  for (let i = 0; i < 40; i++) {
+    ctx.globalAlpha = 0.3 + (Math.sin(Date.now() / 500 + i) + 1) * 0.3;
+    ctx.fillRect((i * 137.5 + 50) % W, (i * 97.3 + 20) % (FLOOR_Y - 100), 1 + (i % 3), 1 + (i % 3));
+  }
+  ctx.globalAlpha = 1;
+
+  const cG = ctx.createLinearGradient(0, FLOOR_Y, 0, H);
+  cG.addColorStop(0, '#d4956b'); cG.addColorStop(1, '#a06030');
+  ctx.fillStyle = cG; ctx.fillRect(0, FLOOR_Y, W, H - FLOOR_Y);
+
+  ctx.strokeStyle = 'rgba(0,0,0,0.1)'; ctx.lineWidth = 1;
+  for (let x = 0; x < W; x += 45) { ctx.beginPath(); ctx.moveTo(x, FLOOR_Y); ctx.lineTo(x, H); ctx.stroke(); }
+
+  ctx.strokeStyle = '#fff'; ctx.lineWidth = 3;
+  ctx.strokeRect(COURT_LEFT, FLOOR_Y, COURT_RIGHT - COURT_LEFT, H - FLOOR_Y);
+  ctx.beginPath(); ctx.moveTo(CENTER_X, FLOOR_Y); ctx.lineTo(CENTER_X, H); ctx.stroke();
+  ctx.beginPath(); ctx.arc(CENTER_X, FLOOR_Y, 40, 0, Math.PI); ctx.stroke();
+
+  ctx.setLineDash([8, 6]);
+  ctx.strokeStyle = '#ffdd57'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(THREE_PT_LEFT, FLOOR_Y); ctx.lineTo(THREE_PT_LEFT, H); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(THREE_PT_RIGHT, FLOOR_Y); ctx.lineTo(THREE_PT_RIGHT, H); ctx.stroke();
+  ctx.strokeStyle = '#80ffdb';
+  ctx.beginPath(); ctx.moveTo(TWO_PT_LEFT, FLOOR_Y); ctx.lineTo(TWO_PT_LEFT, H); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(TWO_PT_RIGHT, FLOOR_Y); ctx.lineTo(TWO_PT_RIGHT, H); ctx.stroke();
+  ctx.setLineDash([]);
+
+  ctx.font = 'bold 14px monospace'; ctx.textAlign = 'center'; ctx.fillStyle = 'rgba(255,255,255,0.4)';
+  ctx.fillText('1pt', (COURT_LEFT + TWO_PT_LEFT) / 2, FLOOR_Y + 20);
+  ctx.fillText('2pt', (TWO_PT_LEFT + THREE_PT_LEFT) / 2, FLOOR_Y + 20);
+  ctx.fillText('3pt', (THREE_PT_LEFT + CENTER_X) / 2, FLOOR_Y + 20);
+  ctx.fillText('3pt', (CENTER_X + THREE_PT_RIGHT) / 2, FLOOR_Y + 20);
+  ctx.fillText('2pt', (THREE_PT_RIGHT + TWO_PT_RIGHT) / 2, FLOOR_Y + 20);
+  ctx.fillText('1pt', (TWO_PT_RIGHT + COURT_RIGHT) / 2, FLOOR_Y + 20);
+}
+
+function drawHoop(hoop, side) {
+  const y = hoop.y;
+  ctx.fillStyle = '#888';
+  if (side === 'left') ctx.fillRect(45, y - 10, 8, FLOOR_Y - y + 10);
+  else ctx.fillRect(W - 53, y - 10, 8, FLOOR_Y - y + 10);
+
+  ctx.fillStyle = '#fff'; ctx.strokeStyle = '#333'; ctx.lineWidth = 2;
+  if (side === 'left') { ctx.fillRect(52, y - 50, 10, 80); ctx.strokeRect(52, y - 50, 10, 80); }
+  else { ctx.fillRect(W - 62, y - 50, 10, 80); ctx.strokeRect(W - 62, y - 50, 10, 80); }
+
+  ctx.strokeStyle = '#e94560'; ctx.lineWidth = 2;
+  if (side === 'left') ctx.strokeRect(54, y - 20, 6, 30);
+  else ctx.strokeRect(W - 60, y - 20, 6, 30);
+
+  ctx.strokeStyle = '#e94560'; ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.moveTo(hoop.rimLeft, y); ctx.lineTo(hoop.rimRight, y); ctx.stroke();
+  ctx.fillStyle = '#e94560';
+  ctx.beginPath(); ctx.arc(hoop.rimLeft, y, 4, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(hoop.rimRight, y, 4, 0, Math.PI * 2); ctx.fill();
+
+  ctx.strokeStyle = '#f5f5f5'; ctx.lineWidth = 1.5; ctx.globalAlpha = 0.7;
+  for (let i = 0; i <= 5; i++) {
+    const nx = hoop.rimLeft + (hoop.rimRight - hoop.rimLeft) * (i / 5);
+    const w = Math.sin(Date.now() / 400 + i) * 2;
+    ctx.beginPath(); ctx.moveTo(nx, y);
+    ctx.quadraticCurveTo(nx + w, y + 18, hoop.x + (nx - hoop.x) * 0.3, y + 30); ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawHat(id, flip) {
+  switch (id) {
+    case 'cap':
+      ctx.fillStyle = '#e94560'; ctx.fillRect(-11, -66, 22, 5);
+      ctx.fillRect(flip > 0 ? 4 : -18, -68, 14, 5); break;
+    case 'mohawk':
+      ctx.fillStyle = '#06d6a0';
+      for (let i = 0; i < 5; i++) { const h = 4 + i * 2; ctx.fillRect(-8 + i * 4, -62 - h, 4, h + 2); } break;
+    case 'crown':
+      ctx.fillStyle = '#ffd93d'; ctx.fillRect(-11, -67, 22, 7);
+      ctx.fillRect(-10, -73, 4, 6); ctx.fillRect(-2, -75, 4, 8); ctx.fillRect(6, -73, 4, 6);
+      ctx.fillStyle = '#e94560'; ctx.fillRect(-1, -68, 3, 3); break;
+    case 'wizard':
+      ctx.fillStyle = '#9b5de5'; ctx.beginPath();
+      ctx.moveTo(-13, -62); ctx.lineTo(0, -90); ctx.lineTo(13, -62); ctx.fill();
+      ctx.fillStyle = '#ffd93d'; ctx.fillRect(-2, -80, 5, 5); break;
+    case 'ninja':
+      ctx.fillStyle = '#333'; ctx.fillRect(-12, -60, 24, 14);
+      ctx.fillStyle = '#fff'; ctx.fillRect(-8, -56, 16, 3); break;
+  }
+}
+
+function drawPlayerSprite(p, cfg) {
+  const { shirt, pants, skin, hat, label, headband } = cfg;
+  const x = p.x, y = p.y + p.bounceY, flip = p.facingRight ? 1 : -1;
+  const bob = p.animFrame % 2 === 1 ? -2 : 0;
+  ctx.save(); ctx.translate(x, y + bob);
+
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  ctx.beginPath(); ctx.ellipse(0, 2, 18, 5, 0, 0, Math.PI * 2); ctx.fill();
+
+  const ls = p.animFrame % 2 === 0 ? 0 : 5;
+  ctx.fillStyle = pants;
+  ctx.fillRect(-10 - ls, -16, 8, 16); ctx.fillRect(2 + ls, -16, 8, 16);
+  ctx.fillStyle = '#333';
+  ctx.fillRect(-12 - ls, -4, 10, 5); ctx.fillRect(0 + ls, -4, 10, 5);
+
+  ctx.fillStyle = shirt; ctx.fillRect(-14, -44, 28, 30);
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 14px monospace'; ctx.textAlign = 'center';
+  ctx.fillText(label === 'YOU' ? '1' : '2', 0, -22);
+
+  ctx.fillStyle = skin;
+  if (p.charging) { ctx.fillRect(-18, -52, 8, 18); ctx.fillRect(10, -52, 8, 18); }
+  else if (p.hasBall) { ctx.fillRect(-18 * flip, -40, 8, 16); ctx.fillRect(10 * flip, -36, 8, 12); }
+  else { const a = Math.sin(p.animTimer / 5) * 4; ctx.fillRect(-18, -38 + a, 8, 14); ctx.fillRect(10, -38 - a, 8, 14); }
+
+  ctx.fillStyle = skin; ctx.fillRect(-10, -58, 20, 16);
+  ctx.fillStyle = hat !== 'ninja' ? (shirt === '#ffd93d' ? '#ccaa00' : shirt) : '#333';
+  ctx.fillRect(-11, -62, 22, 8);
+
+  if (hat !== 'ninja') {
+    ctx.fillStyle = '#333'; const ex = 3 * flip;
+    ctx.fillRect(-5 + ex, -54, 3, 4); ctx.fillRect(3 + ex, -54, 3, 4); ctx.fillRect(-3 + ex, -48, 7, 2);
+  }
+  if (hat === 'none' || hat === 'cap' || hat === 'mohawk') {
+    ctx.fillStyle = headband; ctx.fillRect(-11, -56, 22, 3);
+  }
+  drawHat(hat, flip);
+  ctx.restore();
+
+  ctx.fillStyle = shirt; ctx.font = 'bold 11px monospace'; ctx.textAlign = 'center';
+  ctx.fillText(label, x, y - p.h - 20 + bob);
+}
+
+function drawFreeBall() {
+  if (ball.owner) return;
+  ctx.save(); ctx.translate(ball.x, ball.y); ctx.rotate(ball.rotation);
+  ctx.shadowColor = getBallColor(); ctx.shadowBlur = 8;
+  ctx.fillStyle = getBallColor();
+  ctx.beginPath(); ctx.arc(0, 0, ball.radius, 0, Math.PI * 2); ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = getBallLineColor(); ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(-ball.radius, 0); ctx.lineTo(ball.radius, 0); ctx.stroke();
+  ctx.beginPath(); ctx.arc(0, 0, ball.radius, -Math.PI * 0.3, Math.PI * 0.3); ctx.stroke();
+  ctx.beginPath(); ctx.arc(0, 0, ball.radius, Math.PI * 0.7, Math.PI * 1.3); ctx.stroke();
+  ctx.restore();
+}
+
+function drawBallOn(p) {
+  if (!p.hasBall) return;
+  const bx = p.x, by = p.y + p.bounceY - p.h - ball.radius - (p.charging ? 8 : 0);
+  ctx.save(); ctx.translate(bx, by);
+  ctx.fillStyle = getBallColor();
+  ctx.beginPath(); ctx.arc(0, 0, ball.radius, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = getBallLineColor(); ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(-ball.radius, 0); ctx.lineTo(ball.radius, 0); ctx.stroke();
+  ctx.restore();
+}
+
+function drawPowerBar() {
+  if (!player.charging) return;
+  const bW = 50, bH = 8, bx = player.x - bW / 2, by = player.y + player.bounceY - player.h - 40;
+  ctx.fillStyle = '#333'; ctx.fillRect(bx - 1, by - 1, bW + 2, bH + 2);
+  const g = ctx.createLinearGradient(bx, by, bx + bW, by);
+  g.addColorStop(0, '#06d6a0'); g.addColorStop(0.5, '#ffd93d'); g.addColorStop(1, '#ef476f');
+  ctx.fillStyle = g; ctx.fillRect(bx, by, bW * (player.power / player.maxPower), bH);
+  ctx.strokeStyle = '#fff'; ctx.lineWidth = 1; ctx.strokeRect(bx - 1, by - 1, bW + 2, bH + 2);
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 9px monospace'; ctx.textAlign = 'center';
+  ctx.fillText('POWER', player.x, by - 4);
+}
+
+function drawScoreboard() {
+  const eq = getEquipped();
+  ctx.fillStyle = 'rgba(0,0,0,0.7)';
+  const sW = 320, sH = 50, sX = CENTER_X - sW / 2, sY = 10;
+  ctx.beginPath(); ctx.roundRect(sX, sY, sW, sH, 10); ctx.fill();
+  ctx.strokeStyle = '#e94560'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.roundRect(sX, sY, sW, sH, 10); ctx.stroke();
+
+  ctx.fillStyle = eq.shirt.color; ctx.font = 'bold 28px monospace'; ctx.textAlign = 'center';
+  ctx.fillText(player.score, CENTER_X - 80, sY + 36);
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 16px monospace';
+  ctx.fillText('VS', CENTER_X, sY + 34);
+  ctx.fillStyle = cpuOutfit.shirt; ctx.font = 'bold 28px monospace';
+  ctx.fillText(cpu.score, CENTER_X + 80, sY + 36);
+
+  ctx.font = 'bold 10px monospace';
+  ctx.fillStyle = eq.shirt.color; ctx.fillText('YOU', CENTER_X - 80, sY + 14);
+  ctx.fillStyle = cpuOutfit.shirt; ctx.fillText(gameMode === '2p' ? 'P2' : 'CPU', CENTER_X + 80, sY + 14);
+  ctx.fillStyle = 'rgba(255,255,255,0.4)'; ctx.font = '10px monospace';
+  ctx.fillText(`First to ${winScore}`, CENTER_X, sY + 14);
+
+  // Coins & streak
+  ctx.fillStyle = '#ffd93d'; ctx.font = 'bold 12px monospace'; ctx.textAlign = 'left';
+  ctx.fillText(`${save.coins} coins`, sX + sW + 10, sY + 18);
+  if (playerStreak >= 2) {
+    ctx.fillStyle = playerOnFire ? '#ff6b00' : '#fff';
+    ctx.fillText(`${playerStreak} in a row${playerOnFire ? ' FIRE!' : ''}`, sX + sW + 10, sY + 34);
+  }
+
+  if (scoreFlashTimer > 0) {
+    ctx.globalAlpha = scoreFlashTimer / 60; ctx.fillStyle = '#ffd93d';
+    ctx.font = `bold ${30 + (60 - scoreFlashTimer)}px monospace`; ctx.textAlign = 'center';
+    ctx.fillText(scoreFlash, CENTER_X, 120); ctx.globalAlpha = 1;
+  }
+}
+
+function drawParticles() {
+  for (const p of particles) { ctx.globalAlpha = Math.max(0, p.life); ctx.fillStyle = p.color; ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size); }
+  ctx.globalAlpha = 1;
+}
+function drawFloats() {
+  for (const t of floatingTexts) { ctx.globalAlpha = Math.min(1, t.life / 30); ctx.fillStyle = t.color; ctx.font = 'bold 16px monospace'; ctx.textAlign = 'center'; ctx.fillText(t.text, t.x, t.y); }
+  ctx.globalAlpha = 1;
+}
+
+// ==================== BUTTON / UI HELPERS ====================
+function drawBtn(x, y, w, h, text, base, tc, fs) {
+  const hv = isHover(x, y, w, h), sc = hv ? 1.05 : 1, cx = x + w / 2, cy = y + h / 2;
+  ctx.save(); ctx.translate(cx, cy); ctx.scale(sc, sc); ctx.translate(-cx, -cy);
+  if (hv) { ctx.shadowColor = base; ctx.shadowBlur = 12; }
+  ctx.fillStyle = base; ctx.beginPath(); ctx.roundRect(x, y, w, h, 10); ctx.fill(); ctx.shadowBlur = 0;
+  ctx.fillStyle = 'rgba(255,255,255,0.15)';
+  ctx.beginPath(); ctx.roundRect(x, y, w, h / 2, [10, 10, 0, 0]); ctx.fill();
+  ctx.fillStyle = tc || '#fff'; ctx.font = `bold ${fs || 18}px monospace`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(text, cx, cy + 1);
+  ctx.textBaseline = 'alphabetic'; ctx.restore();
+}
+
+function drawCoinIcon(x, y) {
+  ctx.fillStyle = '#ffd93d'; ctx.beginPath(); ctx.arc(x, y, 10, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#b8860b'; ctx.font = 'bold 11px monospace'; ctx.textAlign = 'center'; ctx.fillText('$', x, y + 4);
+  ctx.fillStyle = '#ffd93d'; ctx.font = 'bold 18px monospace'; ctx.textAlign = 'left'; ctx.fillText(save.coins, x + 16, y + 6);
+}
+
+function drawPreview(cx, cy, sc, hat, shirt, pants) {
+  ctx.save(); ctx.translate(cx, cy); ctx.scale(sc, sc);
+  ctx.fillStyle = pants; ctx.fillRect(-10, -16, 8, 16); ctx.fillRect(2, -16, 8, 16);
+  ctx.fillStyle = '#333'; ctx.fillRect(-12, -4, 10, 5); ctx.fillRect(0, -4, 10, 5);
+  ctx.fillStyle = shirt; ctx.fillRect(-14, -44, 28, 30);
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 14px monospace'; ctx.textAlign = 'center'; ctx.fillText('1', 0, -22);
+  ctx.fillStyle = '#ffd5a5'; ctx.fillRect(-18, -38, 8, 14); ctx.fillRect(10, -38, 8, 14);
+  ctx.fillStyle = '#ffd5a5'; ctx.fillRect(-10, -58, 20, 16);
+  ctx.fillStyle = shirt; ctx.fillRect(-11, -62, 22, 8);
+  if (hat !== 'ninja') { ctx.fillStyle = '#333'; ctx.fillRect(-2, -54, 3, 4); ctx.fillRect(6, -54, 3, 4); ctx.fillRect(0, -48, 7, 2); }
+  if (hat === 'none' || hat === 'cap' || hat === 'mohawk') { ctx.fillStyle = '#ffd93d'; ctx.fillRect(-11, -56, 22, 3); }
+  drawHat(hat, 1); ctx.restore();
+}
+
+// ==================== SCREENS ====================
+function drawMenu() {
+  clickAreas = [];
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, '#0f3460'); grad.addColorStop(1, '#16213e');
+  ctx.fillStyle = grad; ctx.fillRect(0, 0, W, H);
+
+  ctx.fillStyle = '#fff';
+  for (let i = 0; i < 60; i++) {
+    ctx.globalAlpha = 0.3 + (Math.sin(Date.now() / 500 + i) + 1) * 0.3;
+    ctx.fillRect((i * 137.5 + 50) % W, (i * 97.3 + 20) % H, 1 + (i % 3), 1 + (i % 3));
+  }
+  ctx.globalAlpha = 1;
+
+  const tb = Math.sin(Date.now() / 400) * 5;
+  ctx.fillStyle = '#ffd93d'; ctx.font = 'bold 44px monospace'; ctx.textAlign = 'center';
+  ctx.fillText('BASKETBALL', CENTER_X, 60 + tb);
+  ctx.fillStyle = '#e94560'; ctx.font = 'bold 32px monospace';
+  ctx.fillText('FUN!', CENTER_X, 95 + tb);
+
+  const eq = getEquipped();
+  drawPreview(CENTER_X, 200, 1.6, eq.hat, eq.shirt.color, eq.pants.color);
+  ctx.fillStyle = getBallColor();
+  ctx.beginPath(); ctx.arc(CENTER_X + 55, 170, 12, 0, Math.PI * 2); ctx.fill();
+
+  drawCoinIcon(CENTER_X - 40, 255);
+
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 14px monospace'; ctx.textAlign = 'center';
+  ctx.fillText('FIRST TO:', CENTER_X - 160, 300);
+
+  const opts = [5, 10, 15, 21], oW = 48, oH = 34, oG = 8;
+  const oSX = CENTER_X - 160 - (opts.length * oW + (opts.length - 1) * oG) / 2 + 60;
+  opts.forEach((v, i) => {
+    const ox = oSX + i * (oW + oG), oy = 310;
+    drawBtn(ox, oy, oW, oH, String(v), winScore === v ? '#06d6a0' : '#334', winScore === v ? '#000' : '#aaa', 16);
+    addClick(ox, oy, oW, oH, () => { winScore = v; });
+  });
+
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 14px monospace'; ctx.textAlign = 'center';
+  ctx.fillText('DIFFICULTY:', CENTER_X + 160, 300);
+
+  const diffs = ['easy', 'medium', 'hard'], dColors = { 'easy': '#06d6a0', 'medium': '#ffd93d', 'hard': '#e94560' };
+  const dW = 70, dH = 34, dG = 8;
+  const dSX = CENTER_X + 160 - (diffs.length * dW + (diffs.length - 1) * dG) / 2;
+  diffs.forEach((d, i) => {
+    const dx = dSX + i * (dW + dG), dy = 310;
+    drawBtn(dx, dy, dW, dH, d.toUpperCase(), difficulty === d ? dColors[d] : '#334', difficulty === d ? '#000' : '#aaa', 12);
+    addClick(dx, dy, dW, dH, () => { difficulty = d; });
+  });
+
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 14px monospace'; ctx.textAlign = 'center';
+  ctx.fillText('MODE:', CENTER_X, 360);
+
+  const mOpts = ['1p', '2p'], mLabels = ['1 PLAYER', '2 PLAYERS'];
+  const mW = 120, mH = 34, mG = 10;
+  const mSX = CENTER_X - (mOpts.length * mW + (mOpts.length - 1) * mG) / 2;
+  mOpts.forEach((m, i) => {
+    const mx = mSX + i * (mW + mG), my = 370;
+    const act = gameMode === m;
+    drawBtn(mx, my, mW, mH, mLabels[i], act ? '#4d96ff' : '#334', act ? '#fff' : '#aaa', 13);
+    addClick(mx, my, mW, mH, () => { gameMode = m; });
+  });
+
+  // Bottom buttons
+  const bY = 450, bH = 50;
+  drawBtn(CENTER_X - 300, bY, 130, bH, 'SHOP', '#9b5de5', '#fff', 20);
+  addClick(CENTER_X - 300, bY, 130, bH, () => { gameState = 'shop'; shopTab = 'hats'; });
+
+  drawBtn(CENTER_X - 130, bY, 130, bH, 'STATS', '#4d96ff', '#fff', 20);
+  addClick(CENTER_X - 130, bY, 130, bH, () => { gameState = 'stats'; });
+
+  drawBtn(CENTER_X + 40, bY, 180, bH, 'PLAY!', '#06d6a0', '#000', 24);
+  addClick(CENTER_X + 40, bY, 180, bH, () => startGame());
+
+  ctx.fillStyle = 'rgba(255,255,255,0.3)'; ctx.font = '11px monospace'; ctx.textAlign = 'center';
+  ctx.fillText('Arrows: Move/Jump | Space: Charge & Shoot (even mid-air!) | Dunk very close to hoop!', CENTER_X, H - 10);
+}
+
+function drawShop() {
+  clickAreas = [];
+  ctx.fillStyle = '#1a1a2e'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#9b5de5'; ctx.font = 'bold 32px monospace'; ctx.textAlign = 'center'; ctx.fillText('SHOP', CENTER_X, 40);
+
+  drawBtn(20, 15, 80, 35, 'BACK', '#e94560', '#fff', 14);
+  addClick(20, 15, 80, 35, () => { gameState = 'menu'; });
+  drawCoinIcon(W - 140, 32);
+
+  const tabs = ['hats', 'balls', 'shirts', 'pants'], tW = 100, tH = 36, tG = 10;
+  const tSX = CENTER_X - (tabs.length * tW + (tabs.length - 1) * tG) / 2;
+  tabs.forEach((t, i) => {
+    const tx = tSX + i * (tW + tG), ty = 60, a = shopTab === t;
+    drawBtn(tx, ty, tW, tH, t.toUpperCase(), a ? '#4cc9f0' : '#2a2a4a', a ? '#000' : '#888', 13);
+    addClick(tx, ty, tW, tH, () => { shopTab = t; });
+  });
+
+  const items = SHOP[shopTab];
+  const catKey = shopTab, eqKey = shopTab === 'hats' ? 'hat' : shopTab === 'balls' ? 'ball' : shopTab === 'shirts' ? 'shirt' : 'pants';
+  const cW = 120, cH = 120, cG = 15;
+
+  items.forEach((item, i) => {
+    const col = i % 4, row = Math.floor(i / 4);
+    const cx = 40 + col * (cW + cG), cy = 115 + row * (cH + cG);
+    const owned = save.owned[catKey].includes(item.id);
+    const equipped = save.equipped[eqKey] === item.id;
+    const afford = save.coins >= item.price;
+
+    ctx.fillStyle = equipped ? '#1a4a3a' : owned ? '#2a2a4a' : '#1e1e3a';
+    ctx.strokeStyle = equipped ? '#06d6a0' : owned ? '#555' : '#333';
+    ctx.lineWidth = equipped ? 3 : 1;
+    ctx.beginPath(); ctx.roundRect(cx, cy, cW, cH, 8); ctx.fill();
+    ctx.beginPath(); ctx.roundRect(cx, cy, cW, cH, 8); ctx.stroke();
+
+    const ix = cx + cW / 2, iy = cy + 35;
+    if (shopTab === 'hats') {
+      ctx.save(); ctx.translate(ix, iy); ctx.scale(1.3, 1.3);
+      ctx.fillStyle = '#555'; ctx.fillRect(-8, -8, 16, 12); ctx.fillRect(-9, -12, 18, 6);
+      drawHat(item.id, 1); ctx.restore();
+    } else if (shopTab === 'balls') {
+      const c = item.color === 'rainbow' ? `hsl(${(Date.now() / 10) % 360},100%,55%)` : item.color;
+      ctx.fillStyle = c; ctx.beginPath(); ctx.arc(ix, iy, 15, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = item.color === 'rainbow' ? `hsl(${((Date.now() / 10) + 40) % 360},80%,40%)` : item.line;
+      ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(ix - 15, iy); ctx.lineTo(ix + 15, iy); ctx.stroke();
+    } else {
+      ctx.fillStyle = item.color; ctx.beginPath(); ctx.roundRect(ix - 18, iy - 14, 36, 28, 5); ctx.fill();
+      if (shopTab === 'shirts') { ctx.fillStyle = '#fff'; ctx.font = 'bold 14px monospace'; ctx.textAlign = 'center'; ctx.fillText('1', ix, iy + 5); }
+    }
+
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 12px monospace'; ctx.textAlign = 'center';
+    ctx.fillText(item.name, ix, cy + 75);
+
+    if (equipped) { ctx.fillStyle = '#06d6a0'; ctx.font = 'bold 11px monospace'; ctx.fillText('EQUIPPED', ix, cy + 108); }
+    else if (owned) { ctx.fillStyle = '#4cc9f0'; ctx.font = 'bold 11px monospace'; ctx.fillText('TAP EQUIP', ix, cy + 108); }
+    else { ctx.fillStyle = afford ? '#ffd93d' : '#666'; ctx.font = 'bold 12px monospace'; ctx.fillText(`${item.price} coins`, ix, cy + 108); }
+
+    addClick(cx, cy, cW, cH, () => {
+      if (equipped) return;
+      if (owned) { save.equipped[eqKey] = item.id; writeSave(); }
+      else if (afford) { save.coins -= item.price; save.owned[catKey].push(item.id); save.equipped[eqKey] = item.id; writeSave(); }
+    });
+  });
+
+  const eq = getEquipped(), px = W - 150;
+  ctx.fillStyle = 'rgba(255,255,255,0.05)'; ctx.beginPath(); ctx.roundRect(px - 60, 115, 120, 220, 10); ctx.fill();
+  ctx.fillStyle = '#888'; ctx.font = '11px monospace'; ctx.textAlign = 'center'; ctx.fillText('PREVIEW', px, 135);
+  drawPreview(px, 260, 2.0, eq.hat, eq.shirt.color, eq.pants.color);
+  ctx.fillStyle = getBallColor(); ctx.beginPath(); ctx.arc(px + 50, 220, 12, 0, Math.PI * 2); ctx.fill();
+}
+
+function drawStats() {
+  clickAreas = [];
+  ctx.fillStyle = '#1a1a2e'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#4d96ff'; ctx.font = 'bold 36px monospace'; ctx.textAlign = 'center'; ctx.fillText('YOUR STATS', CENTER_X, 50);
+
+  drawBtn(20, 15, 80, 35, 'BACK', '#e94560', '#fff', 14);
+  addClick(20, 15, 80, 35, () => { gameState = 'menu'; });
+
+  const s = save.stats, lines = [
+    ['Games Played', s.gamesPlayed],
+    ['Wins', s.wins],
+    ['Losses', s.losses],
+    ['Win Rate', s.gamesPlayed > 0 ? Math.round(s.wins / s.gamesPlayed * 100) + '%' : '--'],
+    ['Total Points', s.totalPoints],
+    ['Best Streak', s.bestStreak],
+    ['Total Coins Earned', save.coins],
+  ];
+
+  lines.forEach(([label, val], i) => {
+    const y = 120 + i * 50;
+    ctx.fillStyle = 'rgba(255,255,255,0.05)';
+    ctx.beginPath(); ctx.roundRect(CENTER_X - 200, y - 10, 400, 40, 8); ctx.fill();
+    ctx.fillStyle = '#aaa'; ctx.font = 'bold 16px monospace'; ctx.textAlign = 'left';
+    ctx.fillText(label, CENTER_X - 180, y + 15);
+    ctx.fillStyle = '#fff'; ctx.textAlign = 'right';
+    ctx.fillText(String(val), CENTER_X + 180, y + 15);
+  });
+}
+
+function drawCountdown() {
+  // Draw game scene behind countdown
+  drawCourt(); drawHoop(HOOP_LEFT, 'left'); drawHoop(HOOP_RIGHT, 'right');
+  const eq = getEquipped();
+  drawPlayerSprite(player, { shirt: eq.shirt.color, pants: eq.pants.color, skin: '#ffd5a5', hat: eq.hat, label: 'YOU', headband: '#ffd93d' });
+  drawBallOn(player);
+  drawPlayerSprite(cpu, { shirt: cpuOutfit.shirt, pants: cpuOutfit.shirt, skin: '#ffd5a5', hat: cpuOutfit.hat, label: gameMode === '2p' ? 'P2' : 'CPU', headband: '#ff6b6b' });
+  drawBallOn(cpu);
+
+  // Overlay
+  ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(0, 0, W, H);
+
+  const phase = Math.floor(countdownTimer / 50);
+  const phaseT = (countdownTimer % 50) / 50;
+  const texts = ['3', '2', '1', 'GO!'];
+  const colors = ['#4cc9f0', '#ffd93d', '#e94560', '#06d6a0'];
+
+  if (phase < 4) {
+    const scale = 1 + Math.sin(phaseT * Math.PI) * 0.3;
+    const alpha = 1 - phaseT * 0.3;
+    ctx.globalAlpha = alpha;
+    ctx.save(); ctx.translate(CENTER_X, H / 2);
+    ctx.scale(scale, scale);
+    ctx.fillStyle = colors[phase];
+    ctx.font = `bold ${phase === 3 ? 72 : 90}px monospace`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(texts[phase], 0, 0);
+    ctx.restore();
+    ctx.globalAlpha = 1;
+  }
+
+  // Difficulty label
+  const dColors = { 'easy': '#06d6a0', 'medium': '#ffd93d', 'hard': '#e94560' };
+  ctx.fillStyle = dColors[difficulty]; ctx.font = 'bold 18px monospace'; ctx.textAlign = 'center';
+  ctx.fillText(`${difficulty.toUpperCase()} MODE`, CENTER_X, H / 2 + 80);
+}
+
+function drawGameOver() {
+  clickAreas = [];
+  ctx.fillStyle = 'rgba(0,0,0,0.75)'; ctx.fillRect(0, 0, W, H);
+  const isW = winner === 'player';
+
+  ctx.fillStyle = isW ? '#ffd93d' : '#e94560'; ctx.font = 'bold 56px monospace'; ctx.textAlign = 'center';
+  ctx.fillText(isW ? 'YOU WIN!' : 'YOU LOSE!', CENTER_X, H / 2 - 70);
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 22px monospace';
+  ctx.fillText(`${player.score} - ${cpu.score}`, CENTER_X, H / 2 - 30);
+
+  if (coinsEarnedThisGame > 0) {
+    ctx.fillStyle = '#ffd93d'; ctx.font = 'bold 18px monospace';
+    ctx.fillText(`You earned ${coinsEarnedThisGame} coins!`, CENTER_X, H / 2 + 5);
+  }
+  if (playerStreak >= 3) {
+    ctx.fillStyle = '#ff6b00'; ctx.font = 'bold 14px monospace';
+    ctx.fillText(`Best streak this game: ${save.stats.bestStreak}`, CENTER_X, H / 2 + 30);
+  }
+
+  ctx.font = '14px monospace'; ctx.fillStyle = isW ? '#06d6a0' : '#4cc9f0';
+  ctx.fillText(isW ? 'Amazing game!' : 'Great try!', CENTER_X, H / 2 + 55);
+
+  const pulse = Math.sin(Date.now() / 300) * 0.15 + 0.85;
+  ctx.globalAlpha = pulse;
+  drawBtn(CENTER_X - 210, H / 2 + 70, 190, 50, 'PLAY AGAIN', '#06d6a0', '#000', 18);
+  ctx.globalAlpha = 1;
+  addClick(CENTER_X - 210, H / 2 + 70, 190, 50, () => startGame());
+
+  drawBtn(CENTER_X + 20, H / 2 + 70, 90, 50, 'MENU', '#4cc9f0', '#000', 16);
+  addClick(CENTER_X + 20, H / 2 + 70, 90, 50, () => { gameState = 'menu'; });
+
+  drawBtn(CENTER_X + 130, H / 2 + 70, 90, 50, 'SHOP', '#9b5de5', '#fff', 16);
+  addClick(CENTER_X + 130, H / 2 + 70, 90, 50, () => { gameState = 'shop'; shopTab = 'hats'; });
+}
+
+// ==================== MAIN LOOP ====================
+function update() {
+  if (gameState === 'countdown') {
+    countdownTimer++;
+    if (countdownTimer >= 200) gameState = 'playing';
+    updateParticles();
+    return;
+  }
+  if (gameState !== 'playing') { updateParticles(); return; }
+
+  if (resetTimer > 0) { resetTimer--; if (resetTimer === 0) resetBall(whoGetsball); }
+  updatePlayer(); updateCPU(); updateBall(); updateParticles();
+  if (screenShake > 0) screenShake -= 0.5;
+  if (scoreFlashTimer > 0) scoreFlashTimer--;
+  if (crowdCheerTimer > 0) crowdCheerTimer--;
+}
+
+function draw() {
+  if (gameState === 'menu') { drawMenu(); return; }
+  if (gameState === 'shop') { drawShop(); return; }
+  if (gameState === 'stats') { drawStats(); return; }
+  if (gameState === 'countdown') { drawCountdown(); return; }
+
+  clickAreas = [];
+  ctx.save();
+  if (screenShake > 0) ctx.translate((Math.random() - .5) * screenShake, (Math.random() - .5) * screenShake);
+
+  drawCourt(); drawHoop(HOOP_LEFT, 'left'); drawHoop(HOOP_RIGHT, 'right');
+  drawFreeBall();
+
+  const eq = getEquipped();
+  drawPlayerSprite(player, { shirt: eq.shirt.color, pants: eq.pants.color, skin: '#ffd5a5', hat: eq.hat, label: 'YOU', headband: '#ffd93d' });
+  drawBallOn(player);
+  drawPlayerSprite(cpu, { shirt: cpuOutfit.shirt, pants: cpuOutfit.shirt, skin: '#ffd5a5', hat: cpuOutfit.hat, label: gameMode === '2p' ? 'P2' : 'CPU', headband: '#ff6b6b' });
+  drawBallOn(cpu);
+
+  drawPowerBar(); drawParticles(); drawFloats(); drawScoreboard();
+
+  ctx.fillStyle = 'rgba(255,255,255,0.25)'; ctx.font = '11px monospace'; ctx.textAlign = 'center';
+  ctx.fillText('Arrow Keys: Move/Jump | Space: Charge & Shoot (mid-air too!) | Dunk near hoop!', CENTER_X, H - 5);
+
+  ctx.restore();
+  if (gameState === 'gameover') drawGameOver();
+}
+
+function gameLoop() { update(); draw(); requestAnimationFrame(gameLoop); }
+
+window.addEventListener('keydown', (e) => {
+  if (gameState === 'gameover' && (e.code === 'Enter' || e.code === 'Space')) { startGame(); e.preventDefault(); }
+  if (gameState === 'menu' && e.code === 'Enter') startGame();
+});
+
+generateCrowd();
+gameLoop();
