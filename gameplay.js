@@ -1,6 +1,35 @@
 // ==================== GAME LOGIC ====================
 function getDiff() { return DIFFICULTY[difficulty]; }
 
+function clampCourtX(x) {
+  return Math.max(COURT_LEFT + cpu.w / 2, Math.min(COURT_RIGHT - cpu.w / 2, x));
+}
+
+function chooseCpuOffensePlan(diff) {
+  const trailing = cpu.score < player.score;
+  const pressurePoint = Math.max(player.score, cpu.score) >= winScore - 2;
+  const desperate = trailing && (player.score - cpu.score >= 2 || pressurePoint);
+  const laneOpen = player.x > HOOP_LEFT.x + 120 || player.y < FLOOR_Y - 20;
+  const rimCrowded = player.x < HOOP_LEFT.x + 95 && player.y >= FLOOR_Y - 30;
+  const roll = Math.random();
+  let mode = 'mid';
+
+  if (laneOpen && roll < diff.driveChance) mode = 'drive';
+  else if ((desperate && roll < 0.75) || (cpuOnFire && roll < 0.6) || (rimCrowded && roll < 0.45) || roll < diff.deepChance) mode = 'deep';
+  else if (trailing && roll < diff.driveChance * 0.6) mode = 'drive';
+
+  let targetX;
+  if (mode === 'drive') targetX = HOOP_LEFT.x + 44 + Math.random() * 18;
+  else if (mode === 'deep') targetX = THREE_PT_LEFT + 45 + Math.random() * 70;
+  else targetX = TWO_PT_LEFT + 28 + Math.random() * 55;
+
+  return {
+    mode,
+    targetX: clampCourtX(targetX),
+    settleFrames: mode === 'drive' ? 18 + Math.random() * 12 : 24 + Math.random() * diff.shootDelayRand,
+  };
+}
+
 function togglePause() {
   if (gameState === 'playing' || gameState === 'countdown') {
     pausedFromState = gameState;
@@ -76,7 +105,7 @@ function resetBall(giver) {
   player.vx = 0; player.vy = 0; player.onGround = true; player.airFrames = 0; player.jumpShotFired = false;
   cpu.vx = 0; cpu.vy = 0; cpu.onGround = true; cpu.aiTimer = 0; cpu.shootTimer = 0;
   player.charging = false; player.power = 0; spaceWasDown = false;
-  player.facingRight = true; cpu.facingRight = false; cpu.targetX = CENTER_X + 80;
+  player.facingRight = true; cpu.facingRight = false; cpu.targetX = CENTER_X + 80; cpu.plan = 'mid'; cpu.planTimer = 0; cpu.contestCooldown = 0;
   ball.x = ball.owner === 'player' ? player.x : cpu.x;
   ball.y = ball.owner === 'player' ? player.y - player.h - ball.radius : cpu.y - cpu.h - ball.radius;
 }
@@ -351,67 +380,122 @@ function updatePlayer() {
 
 function updateCPU() {
   cpu.aiTimer++;
+  if (cpu.planTimer > 0) cpu.planTimer--;
+  if (cpu.contestCooldown > 0) cpu.contestCooldown--;
   const diff = getDiff();
   cpu.speed = diff.speed;
 
   if (cpu.hasBall) {
-    // Move to shooting position
-    const shootZone = THREE_PT_LEFT + 40;
-    if (cpu.x > shootZone + 10) { cpu.vx = -cpu.speed; cpu.facingRight = false; }
-    else if (cpu.x < shootZone - 10) { cpu.vx = cpu.speed; cpu.facingRight = true; }
+    if (cpu.planTimer <= 0) {
+      const plan = chooseCpuOffensePlan(diff);
+      cpu.plan = plan.mode;
+      cpu.targetX = plan.targetX;
+      cpu.planTimer = plan.settleFrames;
+      cpu.shootTimer = 0;
+    }
+
+    const dH = Math.abs(cpu.x - HOOP_LEFT.x);
+    const playerGap = Math.abs(player.x - cpu.x);
+    const playerInFront = player.x < cpu.x + 30;
+    const heavilyContested = playerGap < diff.contestRadius && playerInFront && player.y >= FLOOR_Y - 25;
+    const openRim = player.x > HOOP_LEFT.x + 110 || player.y < FLOOR_Y - 20;
+    const shotWindow = diff.shotWindow;
+
+    if (cpu.plan === 'drive' && heavilyContested && dH > 75 && Math.random() < diff.relocateChance) {
+      cpu.plan = 'deep';
+      cpu.targetX = clampCourtX(THREE_PT_LEFT + 55 + Math.random() * 45);
+      cpu.planTimer = 28;
+      cpu.shootTimer = 0;
+    }
+
+    if (cpu.x > cpu.targetX + shotWindow) { cpu.vx = -cpu.speed * (cpu.plan === 'drive' ? 1 : 0.9); cpu.facingRight = false; }
+    else if (cpu.x < cpu.targetX - shotWindow) { cpu.vx = cpu.speed * (cpu.plan === 'drive' ? 1 : 0.9); cpu.facingRight = true; }
     else {
-      cpu.vx *= 0.5;
+      cpu.vx *= 0.45;
       cpu.shootTimer++;
-      if (cpu.shootTimer > diff.shootDelay + Math.random() * diff.shootDelayRand) {
-        cpu.facingRight = false;
-        ball.lastShootX = cpu.x;
-        const power = diff.shotMin + Math.random() * diff.shotRange;
-        shootBall(cpu, power, HOOP_LEFT);
+
+      if (heavilyContested && cpu.plan !== 'drive' && Math.random() < diff.relocateChance) {
+        const replan = chooseCpuOffensePlan(diff);
+        cpu.plan = replan.mode === 'drive' ? 'mid' : replan.mode;
+        cpu.targetX = replan.targetX;
+        cpu.planTimer = 24;
         cpu.shootTimer = 0;
+      } else if (cpu.plan === 'drive' && dH < 70 && cpu.hasBall) {
+        if (!heavilyContested && openRim && cpu.onGround && Math.random() < diff.dunkChance * 2.2) {
+          cpu.vy = cpu.jumpPower; cpu.onGround = false;
+        }
+        if (!cpu.onGround && dH < 55 && cpu.hasBall) {
+          performDunk(cpu, HOOP_LEFT);
+          cpu.planTimer = 0;
+          cpu.shootTimer = 0;
+        } else if (cpu.shootTimer > Math.max(10, diff.shootDelay * 0.6) && (!heavilyContested || Math.random() < 0.3)) {
+          cpu.facingRight = false;
+          shootBall(cpu, Math.max(20, Math.min(100, 62 + Math.random() * 18 + (Math.random() - 0.5) * diff.missBias)), HOOP_LEFT);
+          cpu.shootTimer = 0;
+          cpu.planTimer = 0;
+        }
+      } else if (cpu.shootTimer > diff.shootDelay + Math.random() * diff.shootDelayRand) {
+        cpu.facingRight = false;
+        let power;
+        if (cpu.plan === 'deep') power = diff.shotMin + diff.shotRange * 0.65 + Math.random() * diff.shotRange * 0.6;
+        else power = diff.shotMin + Math.random() * diff.shotRange * 0.8;
+        power += (Math.random() - 0.5) * diff.missBias;
+        if (heavilyContested) power += (Math.random() - 0.5) * diff.missBias * 0.6;
+        shootBall(cpu, Math.max(18, Math.min(100, power)), HOOP_LEFT);
+        cpu.shootTimer = 0;
+        cpu.planTimer = 0;
       }
     }
 
-    // Hard: attempt dunks when close to hoop
     if (diff.dunkChance > 0) {
-      const dH = Math.abs(cpu.x - HOOP_LEFT.x);
-      if (dH < 80 && cpu.onGround && Math.random() < diff.dunkChance) {
+      if (dH < 80 && cpu.onGround && openRim && Math.random() < diff.dunkChance) {
         cpu.vy = cpu.jumpPower; cpu.onGround = false;
       }
       if (!cpu.onGround && dH < 55 && cpu.hasBall) {
         performDunk(cpu, HOOP_LEFT);
+        cpu.planTimer = 0;
       }
     }
   } else if (!ball.scored && ball.owner === null) {
-    // Chase ball
-    if (ball.x < cpu.x - 10) { cpu.vx = -cpu.speed; cpu.facingRight = false; }
-    else if (ball.x > cpu.x + 10) { cpu.vx = cpu.speed; cpu.facingRight = true; }
+    const chaseX = clampCourtX(ball.x + ball.vx * diff.looseBallLookAhead);
+    if (chaseX < cpu.x - 10) { cpu.vx = -cpu.speed; cpu.facingRight = false; }
+    else if (chaseX > cpu.x + 10) { cpu.vx = cpu.speed; cpu.facingRight = true; }
     else cpu.vx *= 0.5;
 
-    // Jump to block player shots
+    if (ball.inAir && ball.vy > 0 && cpu.onGround) {
+      const reboundXError = Math.abs(chaseX - cpu.x);
+      if (reboundXError < 26 && ball.y < cpu.y - 35 && Math.random() < diff.reboundJumpChance) {
+        cpu.vy = cpu.jumpPower; cpu.onGround = false;
+      }
+    }
+
     if (ball.inAir && ball.lastShooter === 'player' && cpu.onGround) {
       const bd = Math.abs(ball.x - cpu.x);
       if (bd < 70 && ball.y < cpu.y - 20 && Math.random() < diff.blockChance) {
         cpu.vy = cpu.jumpPower; cpu.onGround = false;
+        cpu.contestCooldown = 18;
       }
     }
   } else if (ball.owner === 'player') {
-    // Defend: position between player and right hoop
-    const defendX = player.x + (HOOP_RIGHT.x - player.x) * diff.defendAggro * 0.4;
+    const rimThreat = player.x > HOOP_RIGHT.x - 120;
+    const defendBlend = rimThreat ? 0.55 : 0.4;
+    const defendX = player.x + (HOOP_RIGHT.x - player.x) * diff.defendAggro * defendBlend;
     const clampedDefend = Math.max(player.x + 30, Math.min(COURT_RIGHT - 30, defendX));
     if (cpu.x < clampedDefend - 15) { cpu.vx = cpu.speed * 0.7; cpu.facingRight = true; }
     else if (cpu.x > clampedDefend + 15) { cpu.vx = -cpu.speed * 0.7; cpu.facingRight = false; }
     else cpu.vx *= 0.5;
 
-    // On hard: jump when player is charging nearby
-    if (diff.defendAggro > 0.7 && player.charging && cpu.onGround) {
+    const contestingShot = player.charging || (!player.onGround && player.y < cpu.y - 12);
+    if (cpu.onGround && cpu.contestCooldown === 0 && contestingShot) {
       const distToPlayer = Math.abs(cpu.x - player.x);
-      if (distToPlayer < 80 && Math.random() < 0.02) {
+      const jumpChance = (rimThreat ? diff.helpJumpChance * 1.5 : diff.helpJumpChance) + (player.charging ? diff.blockChance * 0.35 : 0);
+      if (distToPlayer < diff.contestRadius && Math.random() < jumpChance) {
         cpu.vy = cpu.jumpPower; cpu.onGround = false;
+        cpu.contestCooldown = 20;
       }
     }
   } else {
-    // Wander
-    if (cpu.aiTimer % 120 === 0) cpu.targetX = CENTER_X + 50 + Math.random() * 200;
+    if (cpu.aiTimer % 90 === 0) cpu.targetX = clampCourtX(CENTER_X + 20 + Math.random() * 220);
     if (cpu.x < cpu.targetX - 15) { cpu.vx = cpu.speed * 0.6; cpu.facingRight = true; }
     else if (cpu.x > cpu.targetX + 15) { cpu.vx = -cpu.speed * 0.6; cpu.facingRight = false; }
     else cpu.vx *= 0.5;

@@ -92,6 +92,17 @@
   - next-possession ownership
 - Smoke tests now cover scoring outcomes for both player and CPU paths
 
+### Phase 6 shipped
+
+- CPU offense now plans possessions instead of camping one release spot
+- Easy / medium / hard now feel more distinct through:
+  - different drive-vs-deep-shot tendencies
+  - different contest pressure
+  - different relocation behavior when covered
+  - different rebound anticipation
+  - different shot consistency
+- Defense is less random and more context-aware near the rim and on charged shots
+
 ## Execution goal for this pass
 
 Keep the repo simple and browser-native, but make the game feel like a much more finished arcade product without introducing a heavy framework or build step.

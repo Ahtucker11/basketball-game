@@ -20,9 +20,27 @@ const THREE_PT_RIGHT = W - 280;
 const TWO_PT_RIGHT = W - 190;
 
 const DIFFICULTY = {
-  easy:   { speed: 2.0, shotMin: 20, shotRange: 60, shootDelay: 60, shootDelayRand: 60, blockChance: 0, defendAggro: 0.2, dunkChance: 0 },
-  medium: { speed: 2.8, shotMin: 40, shotRange: 40, shootDelay: 30, shootDelayRand: 40, blockChance: 0.03, defendAggro: 0.5, dunkChance: 0 },
-  hard:   { speed: 3.8, shotMin: 55, shotRange: 25, shootDelay: 15, shootDelayRand: 25, blockChance: 0.08, defendAggro: 0.9, dunkChance: 0.015 },
+  easy: {
+    speed: 2.1, shotMin: 26, shotRange: 55, shootDelay: 72, shootDelayRand: 70,
+    blockChance: 0.005, defendAggro: 0.18, dunkChance: 0,
+    driveChance: 0.18, deepChance: 0.12, shotWindow: 24, contestRadius: 36,
+    relocateChance: 0.04, reboundLookAhead: 8, reboundJumpChance: 0.02,
+    helpJumpChance: 0.005, looseBallLookAhead: 8, missBias: 16,
+  },
+  medium: {
+    speed: 2.95, shotMin: 46, shotRange: 34, shootDelay: 36, shootDelayRand: 34,
+    blockChance: 0.035, defendAggro: 0.56, dunkChance: 0.008,
+    driveChance: 0.34, deepChance: 0.2, shotWindow: 18, contestRadius: 48,
+    relocateChance: 0.08, reboundLookAhead: 16, reboundJumpChance: 0.05,
+    helpJumpChance: 0.014, looseBallLookAhead: 16, missBias: 8,
+  },
+  hard: {
+    speed: 3.75, shotMin: 60, shotRange: 20, shootDelay: 18, shootDelayRand: 18,
+    blockChance: 0.09, defendAggro: 0.92, dunkChance: 0.03,
+    driveChance: 0.52, deepChance: 0.28, shotWindow: 14, contestRadius: 62,
+    relocateChance: 0.14, reboundLookAhead: 24, reboundJumpChance: 0.08,
+    helpJumpChance: 0.028, looseBallLookAhead: 24, missBias: 3,
+  },
 };
 
 // ==================== SAVE SYSTEM ====================
@@ -346,7 +364,7 @@ const cpu = {
   x: CENTER_X + 100, y: FLOOR_Y, w: 36, h: 50, vx: 0, vy: 0,
   speed: 2.8, jumpPower: -10, onGround: true, hasBall: false, score: 0,
   facingRight: false, animFrame: 0, animTimer: 0, bounceY: 0,
-  aiTimer: 0, shootTimer: 0, targetX: 0,
+  aiTimer: 0, shootTimer: 0, targetX: 0, plan: 'mid', planTimer: 0, contestCooldown: 0,
 };
 
 // ==================== CROWD ====================
