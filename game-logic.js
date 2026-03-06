@@ -74,12 +74,65 @@
     return 3;
   }
 
+  function cloneSave(save) {
+    return normalizeSave(save);
+  }
+
+  function recordGameStart(save) {
+    const next = cloneSave(save);
+    next.stats.gamesStarted++;
+    next.stats.gamesPlayed = next.stats.gamesCompleted;
+    return next;
+  }
+
+  function recordGameResult(save, result) {
+    const next = cloneSave(save);
+    next.stats.gamesCompleted++;
+    next.stats.gamesPlayed = next.stats.gamesCompleted;
+    if (result === 'player') next.stats.wins++;
+    else if (result === 'cpu') next.stats.losses++;
+    return next;
+  }
+
+  function getEquipKeyForCategory(category) {
+    if (category === 'hats') return 'hat';
+    if (category === 'balls') return 'ball';
+    if (category === 'shirts') return 'shirt';
+    return 'pants';
+  }
+
+  function applyShopAction(save, category, item) {
+    const next = cloneSave(save);
+    const eqKey = getEquipKeyForCategory(category);
+    const ownedList = next.owned[category] || [];
+    const itemId = item.id;
+    const price = readNumber(item.price, 0);
+    const isOwned = ownedList.includes(itemId);
+    const isEquipped = next.equipped[eqKey] === itemId;
+
+    if (isEquipped) return { save: next, action: 'noop', changed: false };
+    if (isOwned) {
+      next.equipped[eqKey] = itemId;
+      return { save: next, action: 'equip', changed: true };
+    }
+    if (next.coins < price) return { save: next, action: 'insufficient_funds', changed: false };
+
+    next.coins -= price;
+    next.owned[category] = [...ownedList, itemId];
+    next.equipped[eqKey] = itemId;
+    return { save: next, action: 'purchase', changed: true };
+  }
+
   const api = {
     createDefaultSave,
     validOwned,
     readNumber,
     normalizeSave,
     getPointValueForShotX,
+    recordGameStart,
+    recordGameResult,
+    getEquipKeyForCategory,
+    applyShopAction,
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

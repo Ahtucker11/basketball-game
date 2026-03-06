@@ -69,6 +69,18 @@
   - `main.js`
 - Shared pure logic now has a small Node smoke test in `smoke-tests.js`
 
+### Phase 4 shipped
+
+- Match progression rules now live in shared pure logic:
+  - game start stat updates
+  - game result stat updates
+- Shop purchase/equip behavior now lives in shared pure logic
+- Smoke tests now cover:
+  - save normalization
+  - scoring tiers
+  - game start / game result stat transitions
+  - shop purchase, equip, noop, and insufficient-funds paths
+
 ## Execution goal for this pass
 
 Keep the repo simple and browser-native, but make the game feel like a much more finished arcade product without introducing a heavy framework or build step.

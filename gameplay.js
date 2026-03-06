@@ -16,13 +16,10 @@ function togglePause() {
 function finishGame(result) {
   winner = result;
   gameState = 'gameover';
-  save.stats.gamesCompleted++;
-  save.stats.gamesPlayed = save.stats.gamesCompleted;
+  save = GameLogic.recordGameResult(save, result);
   if (result === 'player') {
-    save.stats.wins++;
     playSfx('win');
   } else {
-    save.stats.losses++;
     playSfx('lose');
   }
   writeSave();
@@ -59,7 +56,7 @@ function startGame() {
   cpu.speed = getDiff().speed;
   whoGetsball = 'player';
   resetTimer = 0;
-  save.stats.gamesStarted++;
+  save = GameLogic.recordGameStart(save);
   setSeenHelp();
   writeSave();
   playSfx('start');

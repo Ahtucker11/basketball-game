@@ -525,9 +525,10 @@ function drawShop() {
     else { ctx.fillStyle=afford?'#ffd93d':'#666'; ctx.font='bold 12px monospace'; ctx.fillText(`${item.price} coins`,ix,cy+108); }
 
     addClick(cx,cy,cW,cH,() => {
-      if (equipped) return;
-      if (owned) { save.equipped[eqKey]=item.id; writeSave(); }
-      else if (afford) { save.coins-=item.price; save.owned[catKey].push(item.id); save.equipped[eqKey]=item.id; writeSave(); }
+      const result = GameLogic.applyShopAction(save, catKey, item);
+      if (!result.changed) return;
+      save = result.save;
+      writeSave();
     });
   });
 
