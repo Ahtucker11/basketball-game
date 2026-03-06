@@ -6,8 +6,24 @@
 <title>Basketball Fun!</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
-body { background: #1a1a2e; display: flex; justify-content: center; align-items: center; height: 100vh; overflow: hidden; }
-canvas { border: 4px solid #e94560; border-radius: 8px; cursor: pointer; }
+body {
+  background: radial-gradient(circle at top, #16213e 0%, #0f172a 60%, #090d17 100%);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+  overflow: hidden;
+  font-family: monospace;
+  color: #fff;
+  user-select: none;
+}
+canvas {
+  border: 4px solid #e94560;
+  border-radius: 12px;
+  cursor: pointer;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+  touch-action: none;
+}
 </style>
 </head>
 <body>
@@ -41,35 +57,84 @@ const DIFFICULTY = {
 };
 
 // ==================== SAVE SYSTEM ====================
-function loadSave() {
-  try {
-    const d = localStorage.getItem('basketballFun');
-    if (d) {
-      const p = JSON.parse(d);
-      p.coins = p.coins || 0;
-      p.owned = p.owned || {};
-      p.owned.hats = p.owned.hats || ['none'];
-      p.owned.balls = p.owned.balls || ['default'];
-      p.owned.shirts = p.owned.shirts || ['blue'];
-      p.owned.pants = p.owned.pants || ['blue'];
-      p.equipped = p.equipped || {};
-      p.equipped.hat = p.equipped.hat || 'none';
-      p.equipped.ball = p.equipped.ball || 'default';
-      p.equipped.shirt = p.equipped.shirt || 'blue';
-      p.equipped.pants = p.equipped.pants || 'blue';
-      p.stats = p.stats || { wins: 0, losses: 0, gamesPlayed: 0, totalPoints: 0, bestStreak: 0 };
-      return p;
-    }
-  } catch(e) {}
+const SAVE_KEY = 'basketballFun';
+
+function createDefaultSave() {
   return {
     coins: 0,
     owned: { hats: ['none'], balls: ['default'], shirts: ['blue'], pants: ['blue'] },
     equipped: { hat: 'none', ball: 'default', shirt: 'blue', pants: 'blue' },
-    stats: { wins: 0, losses: 0, gamesPlayed: 0, totalPoints: 0, bestStreak: 0 },
+    settings: { sound: true, showTouchControls: true, seenHelp: false },
+    stats: {
+      wins: 0,
+      losses: 0,
+      gamesStarted: 0,
+      gamesCompleted: 0,
+      gamesPlayed: 0,
+      totalPoints: 0,
+      bestStreak: 0,
+      totalCoinsEarned: 0,
+    },
   };
 }
+
+function validOwned(list, fallback) {
+  return Array.isArray(list) && list.length ? [...new Set(list)] : [...fallback];
+}
+
+function readNumber(value, fallback) {
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function normalizeSave(raw = {}) {
+  const defaults = createDefaultSave();
+  const legacyStats = raw.stats || {};
+  const completedGames = readNumber(legacyStats.gamesCompleted, readNumber(legacyStats.gamesPlayed, 0));
+  return {
+    coins: Math.max(0, readNumber(raw.coins, defaults.coins)),
+    owned: {
+      hats: validOwned(raw.owned?.hats, defaults.owned.hats),
+      balls: validOwned(raw.owned?.balls, defaults.owned.balls),
+      shirts: validOwned(raw.owned?.shirts, defaults.owned.shirts),
+      pants: validOwned(raw.owned?.pants, defaults.owned.pants),
+    },
+    equipped: {
+      hat: raw.equipped?.hat || defaults.equipped.hat,
+      ball: raw.equipped?.ball || defaults.equipped.ball,
+      shirt: raw.equipped?.shirt || defaults.equipped.shirt,
+      pants: raw.equipped?.pants || defaults.equipped.pants,
+    },
+    settings: {
+      sound: raw.settings?.sound !== false,
+      showTouchControls: raw.settings?.showTouchControls !== false,
+      seenHelp: !!raw.settings?.seenHelp,
+    },
+    stats: {
+      wins: Math.max(0, readNumber(legacyStats.wins, 0)),
+      losses: Math.max(0, readNumber(legacyStats.losses, 0)),
+      gamesStarted: Math.max(0, readNumber(legacyStats.gamesStarted, completedGames)),
+      gamesCompleted: Math.max(0, completedGames),
+      gamesPlayed: Math.max(0, completedGames),
+      totalPoints: Math.max(0, readNumber(legacyStats.totalPoints, 0)),
+      bestStreak: Math.max(0, readNumber(legacyStats.bestStreak, 0)),
+      totalCoinsEarned: Math.max(0, readNumber(legacyStats.totalCoinsEarned, readNumber(raw.coins, 0))),
+    },
+  };
+}
+
+function loadSave() {
+  try {
+    const data = localStorage.getItem(SAVE_KEY);
+    if (data) return normalizeSave(JSON.parse(data));
+  } catch (e) {}
+  return createDefaultSave();
+}
+
 function writeSave() {
-  try { localStorage.setItem('basketballFun', JSON.stringify(save)); } catch(e) {}
+  try {
+    save.stats.gamesPlayed = save.stats.gamesCompleted;
+    localStorage.setItem(SAVE_KEY, JSON.stringify(save));
+  } catch (e) {}
 }
 let save = loadSave();
 
@@ -126,13 +191,169 @@ function getBallLineColor() {
   return eq.ball.line;
 }
 
+const isTouchDevice = window.matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
+const MENU_TIPS = [
+  'Shoot from deep for 3, mid-range for 2, paint for 1.',
+  'Tap HELP for scoring rules, specials, and controls.',
+  'Press P or Esc any time to pause. Press M to mute.',
+  'Touch controls appear automatically on phones and tablets.',
+];
+
+let audioCtx = null;
+let menuTipTimer = 0;
+let menuTipIndex = 0;
+const virtualKeys = { ArrowLeft: false, ArrowRight: false, ArrowUp: false, Space: false };
+const activeTouchPointers = new Map();
+
+function resizeCanvasDisplay() {
+  const maxWidth = Math.max(320, window.innerWidth - 24);
+  const maxHeight = Math.max(240, window.innerHeight - 24);
+  let displayWidth = Math.min(W, maxWidth);
+  let displayHeight = displayWidth * (H / W);
+  if (displayHeight > maxHeight) {
+    displayHeight = maxHeight;
+    displayWidth = displayHeight * (W / H);
+  }
+  canvas.style.width = `${displayWidth}px`;
+  canvas.style.height = `${displayHeight}px`;
+}
+
+function ensureAudio() {
+  if (!save.settings.sound) return null;
+  const AudioCtor = window.AudioContext || window.webkitAudioContext;
+  if (!AudioCtor) return null;
+  if (!audioCtx) audioCtx = new AudioCtor();
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  return audioCtx;
+}
+
+function playTone(freq, duration, opts = {}) {
+  const audio = ensureAudio();
+  if (!audio || !freq) return;
+  const start = audio.currentTime + (opts.when || 0);
+  const osc = audio.createOscillator();
+  const gain = audio.createGain();
+  const volume = opts.volume || 0.025;
+  osc.type = opts.type || 'square';
+  osc.frequency.setValueAtTime(freq, start);
+  if (opts.slideTo) osc.frequency.linearRampToValueAtTime(opts.slideTo, start + duration);
+  gain.gain.setValueAtTime(0.0001, start);
+  gain.gain.exponentialRampToValueAtTime(volume, start + 0.01);
+  gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+  osc.connect(gain);
+  gain.connect(audio.destination);
+  osc.start(start);
+  osc.stop(start + duration + 0.03);
+}
+
+function playSfx(name) {
+  if (!save.settings.sound) return;
+  if (name === 'click') playTone(620, 0.06, { slideTo: 780, volume: 0.015 });
+  else if (name === 'start') {
+    playTone(440, 0.07, { slideTo: 520, volume: 0.018 });
+    playTone(660, 0.09, { when: 0.05, slideTo: 880, volume: 0.012 });
+  } else if (name === 'countdown') playTone(420, 0.08, { type: 'triangle', slideTo: 360, volume: 0.02 });
+  else if (name === 'go') {
+    playTone(520, 0.08, { type: 'triangle', slideTo: 760, volume: 0.024 });
+    playTone(780, 0.14, { when: 0.04, type: 'triangle', slideTo: 980, volume: 0.018 });
+  } else if (name === 'shoot') playTone(290, 0.1, { type: 'sawtooth', slideTo: 430, volume: 0.02 });
+  else if (name === 'cpuShoot') playTone(240, 0.08, { type: 'sawtooth', slideTo: 360, volume: 0.016 });
+  else if (name === 'score') {
+    playTone(660, 0.09, { type: 'triangle', slideTo: 840, volume: 0.025 });
+    playTone(980, 0.12, { when: 0.05, type: 'triangle', volume: 0.02 });
+  } else if (name === 'cpuScore') {
+    playTone(280, 0.12, { type: 'triangle', slideTo: 220, volume: 0.022 });
+    playTone(220, 0.16, { when: 0.05, type: 'triangle', slideTo: 180, volume: 0.015 });
+  } else if (name === 'dunk') {
+    playTone(120, 0.09, { type: 'square', slideTo: 90, volume: 0.03 });
+    playTone(240, 0.08, { when: 0.04, type: 'sawtooth', slideTo: 160, volume: 0.02 });
+  } else if (name === 'block') playTone(180, 0.07, { type: 'square', slideTo: 120, volume: 0.025 });
+  else if (name === 'pause') playTone(400, 0.05, { type: 'square', slideTo: 320, volume: 0.016 });
+  else if (name === 'resume') playTone(400, 0.05, { type: 'square', slideTo: 520, volume: 0.016 });
+  else if (name === 'win') {
+    playTone(660, 0.12, { type: 'triangle', volume: 0.024 });
+    playTone(880, 0.16, { when: 0.08, type: 'triangle', volume: 0.02 });
+    playTone(1100, 0.18, { when: 0.16, type: 'triangle', volume: 0.016 });
+  } else if (name === 'lose') {
+    playTone(360, 0.12, { type: 'triangle', slideTo: 300, volume: 0.02 });
+    playTone(260, 0.2, { when: 0.1, type: 'triangle', slideTo: 180, volume: 0.016 });
+  }
+}
+
+function clearTouchInputs() {
+  activeTouchPointers.clear();
+  Object.keys(virtualKeys).forEach(code => { virtualKeys[code] = false; });
+}
+
+function isPressed(code) {
+  return !!keys[code] || !!virtualKeys[code];
+}
+
+function shouldUseTouchControls() {
+  return isTouchDevice && save.settings.showTouchControls && (gameState === 'playing' || gameState === 'countdown');
+}
+
+function getTouchButtons() {
+  return [
+    { code: 'ArrowLeft', x: 28, y: H - 106, w: 84, h: 64, label: 'LEFT' },
+    { code: 'ArrowRight', x: 122, y: H - 106, w: 84, h: 64, label: 'RIGHT' },
+    { code: 'ArrowUp', x: W - 206, y: H - 106, w: 84, h: 64, label: 'JUMP' },
+    { code: 'Space', x: W - 112, y: H - 124, w: 92, h: 82, label: 'SHOOT' },
+  ];
+}
+
+function syncTouchInputs() {
+  Object.keys(virtualKeys).forEach(code => { virtualKeys[code] = false; });
+  for (const code of activeTouchPointers.values()) virtualKeys[code] = true;
+}
+
+function updateTouchPointer(e, releaseOnly = false) {
+  if (!isTouchDevice) return;
+  const rect = canvas.getBoundingClientRect();
+  const mx = (e.clientX - rect.left) * (W / rect.width);
+  const my = (e.clientY - rect.top) * (H / rect.height);
+  let targetCode = null;
+  if (!releaseOnly && shouldUseTouchControls()) {
+    const target = getTouchButtons().find(btn => mx >= btn.x && mx <= btn.x + btn.w && my >= btn.y && my <= btn.y + btn.h);
+    targetCode = target ? target.code : null;
+  }
+  if (!targetCode) activeTouchPointers.delete(e.pointerId);
+  else activeTouchPointers.set(e.pointerId, targetCode);
+  syncTouchInputs();
+  if (targetCode || releaseOnly) e.preventDefault();
+}
+
+function toggleSound() {
+  save.settings.sound = !save.settings.sound;
+  writeSave();
+  if (save.settings.sound) playSfx('click');
+}
+
+function toggleTouchControls() {
+  save.settings.showTouchControls = !save.settings.showTouchControls;
+  clearTouchInputs();
+  writeSave();
+}
+
+function setSeenHelp() {
+  if (!save.settings.seenHelp) {
+    save.settings.seenHelp = true;
+    writeSave();
+  }
+}
+
+window.addEventListener('resize', resizeCanvasDisplay);
+resizeCanvasDisplay();
+
 // ==================== GAME STATE ====================
-let gameState = 'menu'; // menu, shop, stats, countdown, playing, gameover
+let gameState = save.settings.seenHelp ? 'menu' : 'help'; // menu, help, shop, stats, countdown, playing, paused, gameover
 let winScore = 10;
 let difficulty = 'medium';
 let winner = '';
 let coinsEarnedThisGame = 0;
 let shopTab = 'hats';
+let pausedFromState = 'playing';
+let lastCountdownPhase = -1;
 
 // Countdown
 let countdownTimer = 0;
@@ -165,11 +386,13 @@ canvas.addEventListener('mousemove', (e) => {
 });
 
 canvas.addEventListener('click', (e) => {
+  ensureAudio();
   const rect = canvas.getBoundingClientRect();
   const mx = (e.clientX - rect.left) * (W / rect.width);
   const my = (e.clientY - rect.top) * (H / rect.height);
   for (const area of clickAreas) {
     if (mx >= area.x && mx <= area.x + area.w && my >= area.y && my <= area.y + area.h) {
+      playSfx('click');
       area.onClick();
       return;
     }
@@ -182,8 +405,19 @@ function isHover(x, y, w, h) { return mouseX >= x && mouseX <= x + w && mouseY >
 // ==================== INPUT ====================
 const keys = {};
 const GAME_KEYS = ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Space'];
-window.addEventListener('keydown', e => { keys[e.code] = true; if (GAME_KEYS.includes(e.code)) e.preventDefault(); });
+window.addEventListener('keydown', e => {
+  keys[e.code] = true;
+  ensureAudio();
+  if (GAME_KEYS.includes(e.code)) e.preventDefault();
+});
 window.addEventListener('keyup', e => { keys[e.code] = false; if (GAME_KEYS.includes(e.code)) e.preventDefault(); });
+canvas.addEventListener('pointerdown', e => { ensureAudio(); updateTouchPointer(e); }, { passive: false });
+canvas.addEventListener('pointermove', e => {
+  if (activeTouchPointers.has(e.pointerId)) updateTouchPointer(e);
+}, { passive: false });
+canvas.addEventListener('pointerup', e => updateTouchPointer(e, true), { passive: false });
+canvas.addEventListener('pointercancel', e => updateTouchPointer(e, true), { passive: false });
+canvas.addEventListener('contextmenu', e => e.preventDefault());
 
 // ==================== GAME OBJECTS ====================
 const ball = {
@@ -316,9 +550,46 @@ function updateParticles() {
 // ==================== GAME LOGIC ====================
 function getDiff() { return DIFFICULTY[difficulty]; }
 
+function togglePause() {
+  if (gameState === 'playing' || gameState === 'countdown') {
+    pausedFromState = gameState;
+    gameState = 'paused';
+    clearTouchInputs();
+    playSfx('pause');
+  } else if (gameState === 'paused') {
+    gameState = pausedFromState;
+    playSfx('resume');
+  }
+}
+
+function finishGame(result) {
+  winner = result;
+  gameState = 'gameover';
+  save.stats.gamesCompleted++;
+  save.stats.gamesPlayed = save.stats.gamesCompleted;
+  if (result === 'player') {
+    save.stats.wins++;
+    playSfx('win');
+  } else {
+    save.stats.losses++;
+    playSfx('lose');
+  }
+  writeSave();
+}
+
+function updateMenuTip() {
+  menuTipTimer++;
+  if (menuTipTimer >= 240) {
+    menuTipTimer = 0;
+    menuTipIndex = (menuTipIndex + 1) % MENU_TIPS.length;
+  }
+}
+
 function startGame() {
   gameState = 'countdown';
   countdownTimer = 0;
+  lastCountdownPhase = -1;
+  pausedFromState = 'playing';
   if (crowd.length === 0) generateCrowd();
   player.score = 0;
   cpu.score = 0;
@@ -335,14 +606,18 @@ function startGame() {
   cpuOnFire = false;
   cpuOutfit = randomCpuOutfit();
   cpu.speed = getDiff().speed;
-  save.stats.gamesPlayed++;
+  whoGetsball = 'player';
+  resetTimer = 0;
+  save.stats.gamesStarted++;
+  setSeenHelp();
   writeSave();
+  playSfx('start');
   resetBall('player');
 }
 
 function resetBall(giver) {
   ball.inAir = false; ball.scored = false; ball.vx = 0; ball.vy = 0;
-  ball.bounceCount = 0; ball.lastShooter = null;
+  ball.bounceCount = 0; ball.lastShooter = null; ball.rotation = 0;
   if (giver === 'player') {
     ball.owner = 'player'; player.hasBall = true; cpu.hasBall = false;
     player.x = CENTER_X - 20; player.y = FLOOR_Y; cpu.x = CENTER_X + 150;
@@ -350,7 +625,12 @@ function resetBall(giver) {
     ball.owner = 'cpu'; cpu.hasBall = true; player.hasBall = false;
     cpu.x = CENTER_X + 20; cpu.y = FLOOR_Y; player.x = CENTER_X - 150;
   }
-  player.charging = false; player.power = 0;
+  player.vx = 0; player.vy = 0; player.onGround = true; player.airFrames = 0; player.jumpShotFired = false;
+  cpu.vx = 0; cpu.vy = 0; cpu.onGround = true; cpu.aiTimer = 0; cpu.shootTimer = 0;
+  player.charging = false; player.power = 0; spaceWasDown = false;
+  player.facingRight = true; cpu.facingRight = false; cpu.targetX = CENTER_X + 80;
+  ball.x = ball.owner === 'player' ? player.x : cpu.x;
+  ball.y = ball.owner === 'player' ? player.y - player.h - ball.radius : cpu.y - cpu.h - ball.radius;
 }
 
 function shootBall(shooter, power, targetHoop) {
@@ -380,6 +660,7 @@ function shootBall(shooter, power, targetHoop) {
   ball.lastShooter = shooter === player ? 'player' : 'cpu';
   ball.lastShootX = sx; shooter.hasBall = false;
   spawnParticles(sx, sy, getBallColor(), 5);
+  playSfx(shooter === player ? 'shoot' : 'cpuShoot');
 }
 
 function performDunk(dunker, hoop) {
@@ -391,6 +672,7 @@ function performDunk(dunker, hoop) {
   screenShake = 15;
   spawnConfetti(hoop.x, hoop.y);
   addFloat(hoop.x, hoop.y - 60, 'SLAM DUNK!', '#ff6b6b');
+  playSfx('dunk');
 }
 
 function getPointValue(sx, hoop) {
@@ -419,6 +701,7 @@ function checkScore() {
     const fireBonus = playerOnFire ? 1 : 0;
     const totalCoins = pts + fireBonus;
     save.coins += totalCoins; coinsEarnedThisGame += totalCoins;
+    save.stats.totalCoinsEarned += totalCoins;
     save.stats.totalPoints += pts;
     if (playerStreak > save.stats.bestStreak) save.stats.bestStreak = playerStreak;
     writeSave();
@@ -427,10 +710,10 @@ function checkScore() {
     spawnConfetti(rh.x, rh.y); spawnCoinParticles(rh.x, rh.y - 30);
     addFloat(rh.x, rh.y - 50, `+${totalCoins} coin${totalCoins > 1 ? 's' : ''}`, '#ffd93d');
     if (fireBonus) addFloat(rh.x + 60, rh.y - 30, 'fire bonus!', '#ff6b00');
+    playSfx('score');
     whoGetsball = 'cpu'; resetTimer = 90;
     if (player.score >= winScore) {
-      gameState = 'gameover'; winner = 'player';
-      save.stats.wins++; writeSave();
+      finishGame('player');
       spawnConfetti(W/2, H/2); spawnConfetti(W/2-100, H/2); spawnConfetti(W/2+100, H/2);
     }
   }
@@ -449,10 +732,10 @@ function checkScore() {
     scoreFlash = `CPU +${pts}!`; scoreFlashTimer = 60; screenShake = 8;
     crowdCheerTimer = 120;
     spawnConfetti(lh.x, lh.y);
+    playSfx('cpuScore');
     whoGetsball = 'player'; resetTimer = 90;
     if (cpu.score >= winScore) {
-      gameState = 'gameover'; winner = 'cpu';
-      save.stats.losses++; writeSave();
+      finishGame('cpu');
     }
   }
 }
@@ -466,6 +749,7 @@ function checkBlock(p, who) {
     screenShake = 6;
     spawnParticles(ball.x, ball.y, '#fff', 8);
     addFloat(ball.x, ball.y - 30, 'BLOCKED!', '#ff6b6b');
+    playSfx('block');
   }
 }
 
@@ -519,7 +803,7 @@ function updateBall() {
       ball.owner='player'; player.hasBall=true; ball.inAir=false;
       spawnParticles(player.x,player.y-player.h,getEquipped().shirt.color,5);
     }
-    if (Math.abs(ball.x-cpu.x)<35 && Math.abs(ball.y-(cpu.y-cpu.h/2))<50 && !cpu.hasBall) {
+    if (ball.owner === null && Math.abs(ball.x-cpu.x)<35 && Math.abs(ball.y-(cpu.y-cpu.h/2))<50 && !cpu.hasBall) {
       ball.owner='cpu'; cpu.hasBall=true; ball.inAir=false;
       spawnParticles(cpu.x,cpu.y-cpu.h,cpuOutfit.shirt,5);
     }
@@ -527,11 +811,11 @@ function updateBall() {
 }
 
 function updatePlayer() {
-  if (keys['ArrowLeft']) { player.vx = -player.speed; player.facingRight = false; }
-  else if (keys['ArrowRight']) { player.vx = player.speed; player.facingRight = true; }
+  if (isPressed('ArrowLeft')) { player.vx = -player.speed; player.facingRight = false; }
+  else if (isPressed('ArrowRight')) { player.vx = player.speed; player.facingRight = true; }
   else player.vx *= 0.7;
 
-  if (keys['ArrowUp'] && player.onGround) {
+  if (isPressed('ArrowUp') && player.onGround) {
     player.vy = player.jumpPower; player.onGround = false;
     player.airFrames = 0; player.jumpShotFired = false;
     spawnParticles(player.x, player.y, '#fff', 3);
@@ -541,9 +825,10 @@ function updatePlayer() {
   if (!player.onGround) player.airFrames++;
   else { player.airFrames = 0; player.jumpShotFired = false; }
 
-  const spaceJustPressed = keys['Space'] && !spaceWasDown;
+  const shootPressed = isPressed('Space');
+  const spaceJustPressed = shootPressed && !spaceWasDown;
 
-  if (keys['Space'] && player.hasBall) {
+  if (shootPressed && player.hasBall) {
     const dH = Math.abs(player.x - HOOP_RIGHT.x);
     if (!player.onGround && dH < 55) {
       // Dunk: in the air + very close to hoop
@@ -561,14 +846,14 @@ function updatePlayer() {
       player.charging = true;
       player.power = Math.min(player.power + 2.5, player.maxPower);
     }
-  } else if (!keys['Space'] && player.charging) {
+  } else if (!shootPressed && player.charging) {
     // Release charged shot (works on ground or air if started charging on ground)
     const shotPower = Math.max(player.power, 20);
     shootBall(player, shotPower, HOOP_RIGHT);
     player.charging = false; player.power = 0;
   }
 
-  spaceWasDown = !!keys['Space'];
+  spaceWasDown = shootPressed;
 
   player.vy += GRAVITY; player.x += player.vx; player.y += player.vy;
   if (player.y > FLOOR_Y) { player.y = FLOOR_Y; player.vy = 0; player.onGround = true; }
@@ -933,6 +1218,74 @@ function drawPreview(cx,cy,sc,hat,shirt,pants) {
   drawHat(hat,1); ctx.restore();
 }
 
+function drawToggleBtn(x, y, w, label, active, color) {
+  drawBtn(x, y, w, 30, label, active ? color : '#2a2f45', active ? '#000' : '#aaa', 12);
+}
+
+function drawInfoCard(x, y, w, h, title, color, lines) {
+  ctx.fillStyle = 'rgba(255,255,255,0.06)';
+  ctx.beginPath(); ctx.roundRect(x, y, w, h, 12); ctx.fill();
+  ctx.strokeStyle = color; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.roundRect(x, y, w, h, 12); ctx.stroke();
+  ctx.fillStyle = color; ctx.font = 'bold 16px monospace'; ctx.textAlign = 'left';
+  ctx.fillText(title, x + 16, y + 28);
+  ctx.fillStyle = '#d9def2'; ctx.font = '13px monospace';
+  lines.forEach((line, i) => ctx.fillText(line, x + 16, y + 56 + i * 22));
+}
+
+function drawTopRightToggles() {
+  drawToggleBtn(W - 220, 18, 90, save.settings.sound ? 'SFX ON' : 'SFX OFF', save.settings.sound, '#ffd93d');
+  addClick(W - 220, 18, 90, 30, () => toggleSound());
+  drawToggleBtn(W - 118, 18, 98, save.settings.showTouchControls ? 'TOUCH ON' : 'TOUCH OFF', save.settings.showTouchControls, '#4cc9f0');
+  addClick(W - 118, 18, 98, 30, () => toggleTouchControls());
+}
+
+function drawTouchControls() {
+  if (!shouldUseTouchControls()) return;
+  for (const btn of getTouchButtons()) {
+    const active = !!virtualKeys[btn.code];
+    ctx.fillStyle = active ? 'rgba(255,217,61,0.45)' : 'rgba(10,16,30,0.38)';
+    ctx.strokeStyle = active ? '#ffd93d' : 'rgba(255,255,255,0.25)';
+    ctx.lineWidth = active ? 3 : 2;
+    ctx.beginPath(); ctx.roundRect(btn.x, btn.y, btn.w, btn.h, 18); ctx.fill();
+    ctx.beginPath(); ctx.roundRect(btn.x, btn.y, btn.w, btn.h, 18); ctx.stroke();
+    ctx.fillStyle = active ? '#111' : '#fff';
+    ctx.font = `bold ${btn.code === 'Space' ? 16 : 14}px monospace`;
+    ctx.textAlign = 'center';
+    ctx.fillText(btn.label, btn.x + btn.w / 2, btn.y + btn.h / 2 + 4);
+  }
+}
+
+function drawPauseButton() {
+  drawBtn(18, 16, 88, 34, 'PAUSE', '#2a2f45', '#fff', 12);
+  addClick(18, 16, 88, 34, () => togglePause());
+}
+
+function drawMatchScene(showHint = true, allowPause = true, allowShake = true) {
+  clickAreas = [];
+  ctx.save();
+  if (allowShake && screenShake > 0) ctx.translate((Math.random() - 0.5) * screenShake, (Math.random() - 0.5) * screenShake);
+
+  drawCourt(); drawHoop(HOOP_LEFT,'left'); drawHoop(HOOP_RIGHT,'right');
+  drawFreeBall();
+
+  const eq = getEquipped();
+  drawPlayerSprite(player,{shirt:eq.shirt.color,pants:eq.pants.color,skin:'#ffd5a5',hat:eq.hat,label:'YOU',headband:'#ffd93d'});
+  drawBallOn(player);
+  drawPlayerSprite(cpu,{shirt:cpuOutfit.shirt,pants:cpuOutfit.shirt,skin:'#ffd5a5',hat:cpuOutfit.hat,label:'CPU',headband:'#ff6b6b'});
+  drawBallOn(cpu);
+
+  drawPowerBar(); drawParticles(); drawFloats(); drawScoreboard();
+  if (allowPause) drawPauseButton();
+  drawTouchControls();
+
+  if (showHint) {
+    ctx.fillStyle = 'rgba(255,255,255,0.28)'; ctx.font = '11px monospace'; ctx.textAlign = 'center';
+    ctx.fillText('Arrows / touch to move and jump | Hold SHOOT to charge | P or Esc pause | M mute', CENTER_X, H - 5);
+  }
+  ctx.restore();
+}
+
 // ==================== SCREENS ====================
 function drawMenu() {
   clickAreas=[];
@@ -947,55 +1300,124 @@ function drawMenu() {
   }
   ctx.globalAlpha=1;
 
+  drawTopRightToggles();
+
   const tb=Math.sin(Date.now()/400)*5;
   ctx.fillStyle='#ffd93d'; ctx.font='bold 44px monospace'; ctx.textAlign='center';
   ctx.fillText('BASKETBALL',CENTER_X,60+tb);
   ctx.fillStyle='#e94560'; ctx.font='bold 32px monospace';
   ctx.fillText('FUN!',CENTER_X,95+tb);
+  ctx.fillStyle='rgba(255,255,255,0.7)'; ctx.font='14px monospace';
+  ctx.fillText('Arcade one-on-one with streaks, shop rewards, pause, sound, and touch controls.', CENTER_X, 122);
 
   const eq=getEquipped();
-  drawPreview(CENTER_X,200,1.6,eq.hat,eq.shirt.color,eq.pants.color);
+  drawPreview(CENTER_X,205,1.6,eq.hat,eq.shirt.color,eq.pants.color);
   ctx.fillStyle=getBallColor();
-  ctx.beginPath(); ctx.arc(CENTER_X+55,170,12,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(CENTER_X+55,175,12,0,Math.PI*2); ctx.fill();
+  drawCoinIcon(CENTER_X-40,262);
 
-  drawCoinIcon(CENTER_X-40,255);
+  if (!save.settings.seenHelp) {
+    ctx.fillStyle='rgba(255,217,61,0.15)';
+    ctx.beginPath(); ctx.roundRect(CENTER_X-150, 280, 300, 28, 14); ctx.fill();
+    ctx.fillStyle='#ffd93d'; ctx.font='bold 12px monospace';
+    ctx.fillText('NEW HERE? TAP HELP FOR CONTROLS + SCORING.', CENTER_X, 299);
+  }
 
   ctx.fillStyle='#fff'; ctx.font='bold 14px monospace'; ctx.textAlign='center';
-  ctx.fillText('FIRST TO:',CENTER_X-160,300);
+  ctx.fillText('FIRST TO:',CENTER_X-160,332);
 
   const opts=[5,10,15,21], oW=48,oH=34,oG=8;
   const oSX=CENTER_X-160-(opts.length*oW+(opts.length-1)*oG)/2+60;
   opts.forEach((v,i) => {
-    const ox=oSX+i*(oW+oG), oy=310;
+    const ox=oSX+i*(oW+oG), oy=342;
     drawBtn(ox,oy,oW,oH,String(v),winScore===v?'#06d6a0':'#334',winScore===v?'#000':'#aaa',16);
     addClick(ox,oy,oW,oH,()=>{ winScore=v; });
   });
 
   ctx.fillStyle='#fff'; ctx.font='bold 14px monospace'; ctx.textAlign='center';
-  ctx.fillText('DIFFICULTY:',CENTER_X+160,300);
+  ctx.fillText('DIFFICULTY:',CENTER_X+160,332);
 
   const diffs=['easy','medium','hard'], dColors={'easy':'#06d6a0','medium':'#ffd93d','hard':'#e94560'};
   const dW=70,dH=34,dG=8;
   const dSX=CENTER_X+160-(diffs.length*dW+(diffs.length-1)*dG)/2;
   diffs.forEach((d,i) => {
-    const dx=dSX+i*(dW+dG), dy=310;
+    const dx=dSX+i*(dW+dG), dy=342;
     drawBtn(dx,dy,dW,dH,d.toUpperCase(),difficulty===d?dColors[d]:'#334',difficulty===d?'#000':'#aaa',12);
     addClick(dx,dy,dW,dH,()=>{ difficulty=d; });
   });
 
-  // Bottom buttons
-  const bY=390, bH=50;
-  drawBtn(CENTER_X-300,bY,130,bH,'SHOP','#9b5de5','#fff',20);
-  addClick(CENTER_X-300,bY,130,bH,()=>{ gameState='shop'; shopTab='hats'; });
+  ctx.fillStyle='rgba(255,255,255,0.08)';
+  ctx.beginPath(); ctx.roundRect(CENTER_X-310, 392, 620, 48, 12); ctx.fill();
+  ctx.fillStyle='#d9def2'; ctx.font='13px monospace'; ctx.textAlign='center';
+  ctx.fillText(MENU_TIPS[menuTipIndex], CENTER_X, 421);
 
-  drawBtn(CENTER_X-130,bY,130,bH,'STATS','#4d96ff','#fff',20);
-  addClick(CENTER_X-130,bY,130,bH,()=>{ gameState='stats'; });
-
-  drawBtn(CENTER_X+40,bY,180,bH,'PLAY!','#06d6a0','#000',24);
-  addClick(CENTER_X+40,bY,180,bH,()=>startGame());
+  const bY=455, bH=50;
+  drawBtn(CENTER_X-330,bY,110,bH,'HELP','#4cc9f0','#000',18);
+  addClick(CENTER_X-330,bY,110,bH,()=>{ gameState='help'; setSeenHelp(); });
+  drawBtn(CENTER_X-190,bY,110,bH,'SHOP','#9b5de5','#fff',18);
+  addClick(CENTER_X-190,bY,110,bH,()=>{ gameState='shop'; shopTab='hats'; });
+  drawBtn(CENTER_X-50,bY,110,bH,'STATS','#4d96ff','#fff',18);
+  addClick(CENTER_X-50,bY,110,bH,()=>{ gameState='stats'; });
+  drawBtn(CENTER_X+90,bY,180,bH,'PLAY!','#06d6a0','#000',24);
+  addClick(CENTER_X+90,bY,180,bH,()=>startGame());
 
   ctx.fillStyle='rgba(255,255,255,0.3)'; ctx.font='11px monospace'; ctx.textAlign='center';
-  ctx.fillText('Arrows: Move/Jump | Space: Charge & Shoot (even mid-air!) | Dunk very close to hoop!',CENTER_X,H-10);
+  ctx.fillText('Arrows: move/jump | Space: charge/shoot | P/Esc: pause | M: mute | H: help',CENTER_X,H-10);
+}
+
+function drawHelp() {
+  clickAreas = [];
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, '#112244');
+  grad.addColorStop(1, '#15192b');
+  ctx.fillStyle = grad; ctx.fillRect(0, 0, W, H);
+
+  drawBtn(20,15,80,35,'BACK','#e94560','#fff',14);
+  addClick(20,15,80,35,()=>{ gameState='menu'; });
+  drawBtn(116,15,96,35,'PLAY','#06d6a0','#000',14);
+  addClick(116,15,96,35,()=>startGame());
+  drawTopRightToggles();
+
+  ctx.fillStyle = '#4cc9f0'; ctx.font = 'bold 34px monospace'; ctx.textAlign = 'center';
+  ctx.fillText('HOW TO PLAY', CENTER_X, 56);
+  ctx.fillStyle = 'rgba(255,255,255,0.72)'; ctx.font = '14px monospace';
+  ctx.fillText('One file. Full arcade loop. Now with pause, sound, cleaner stats, and touch controls.', CENTER_X, 82);
+
+  drawInfoCard(40, 110, 250, 178, 'CONTROLS', '#4cc9f0', [
+    'Arrows / touch: move',
+    'Up / jump button: jump',
+    'Hold Space / SHOOT: charge',
+    'Release to fire',
+    'Air tap SHOOT: jump shot',
+    'Air + near rim: dunk',
+  ]);
+  drawInfoCard(325, 110, 250, 178, 'SCORING', '#ffd93d', [
+    'Paint finish: 1 point',
+    'Mid-range stripe: 2 points',
+    'Deep shot: 3 points',
+    '3 straight buckets = ON FIRE',
+    'Fire gives bonus coins',
+    'First to target score wins',
+  ]);
+  drawInfoCard(610, 110, 250, 178, 'PROGRESSION', '#06d6a0', [
+    'Every bucket earns coins',
+    'Coins unlock cosmetics',
+    'Shop purchases persist',
+    'Stats track lifetime coins',
+    'Completed games count cleanly',
+    'Hard mode bites back',
+  ]);
+
+  drawInfoCard(70, 318, 760, 172, 'QUICK START', '#e94560', [
+    '1. Pick a target score and difficulty on the menu.',
+    '2. Ground charge shots are safest. Jump shots are faster. Rise near the rim to dunk.',
+    '3. Pause with P or Esc if you need a break. Press M to mute instantly.',
+    '4. On phones and tablets, left/right/jump/shoot buttons can appear automatically.',
+    '5. Visit the shop between games, buy a new fit, and bring it into the next run.',
+  ]);
+
+  ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.font = '11px monospace'; ctx.textAlign = 'center';
+  ctx.fillText('Press H from the menu any time to re-open this guide.', CENTER_X, H - 12);
 }
 
 function drawShop() {
@@ -1005,7 +1427,8 @@ function drawShop() {
 
   drawBtn(20,15,80,35,'BACK','#e94560','#fff',14);
   addClick(20,15,80,35,()=>{ gameState='menu'; });
-  drawCoinIcon(W-140,32);
+  drawTopRightToggles();
+  drawCoinIcon(W-354,32);
 
   const tabs=['hats','balls','shirts','pants'], tW=100,tH=36,tG=10;
   const tSX=CENTER_X-(tabs.length*tW+(tabs.length-1)*tG)/2;
@@ -1066,6 +1489,8 @@ function drawShop() {
   ctx.fillStyle='#888'; ctx.font='11px monospace'; ctx.textAlign='center'; ctx.fillText('PREVIEW',px,135);
   drawPreview(px,260,2.0,eq.hat,eq.shirt.color,eq.pants.color);
   ctx.fillStyle=getBallColor(); ctx.beginPath(); ctx.arc(px+50,220,12,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='rgba(255,255,255,0.4)'; ctx.font='11px monospace';
+  ctx.fillText('Buy once. Equip forever.', px, 360);
 }
 
 function drawStats() {
@@ -1075,38 +1500,39 @@ function drawStats() {
 
   drawBtn(20,15,80,35,'BACK','#e94560','#fff',14);
   addClick(20,15,80,35,()=>{ gameState='menu'; });
+  drawTopRightToggles();
 
-  const s=save.stats, lines=[
-    ['Games Played', s.gamesPlayed],
+  const s=save.stats;
+  const completed = s.gamesCompleted;
+  const lines=[
+    ['Games Started', s.gamesStarted],
+    ['Games Completed', completed],
     ['Wins', s.wins],
     ['Losses', s.losses],
-    ['Win Rate', s.gamesPlayed>0?Math.round(s.wins/s.gamesPlayed*100)+'%':'--'],
+    ['Win Rate', completed>0?Math.round(s.wins/completed*100)+'%':'--'],
     ['Total Points', s.totalPoints],
     ['Best Streak', s.bestStreak],
-    ['Total Coins Earned', save.coins],
+    ['Lifetime Coins', s.totalCoinsEarned],
+    ['Wallet', save.coins],
   ];
 
   lines.forEach(([label,val],i) => {
-    const y=120+i*50;
+    const y=102+i*42;
     ctx.fillStyle='rgba(255,255,255,0.05)';
-    ctx.beginPath(); ctx.roundRect(CENTER_X-200,y-10,400,40,8); ctx.fill();
-    ctx.fillStyle='#aaa'; ctx.font='bold 16px monospace'; ctx.textAlign='left';
-    ctx.fillText(label,CENTER_X-180,y+15);
+    ctx.beginPath(); ctx.roundRect(CENTER_X-220,y-10,440,34,8); ctx.fill();
+    ctx.fillStyle='#aaa'; ctx.font='bold 15px monospace'; ctx.textAlign='left';
+    ctx.fillText(label,CENTER_X-198,y+12);
     ctx.fillStyle='#fff'; ctx.textAlign='right';
-    ctx.fillText(String(val),CENTER_X+180,y+15);
+    ctx.fillText(String(val),CENTER_X+198,y+12);
   });
+
+  ctx.fillStyle='rgba(255,255,255,0.35)'; ctx.font='11px monospace'; ctx.textAlign='center';
+  ctx.fillText('Stats now separate started games, completed games, and lifetime coins earned.', CENTER_X, H - 14);
 }
 
 function drawCountdown() {
-  // Draw game scene behind countdown
-  drawCourt(); drawHoop(HOOP_LEFT,'left'); drawHoop(HOOP_RIGHT,'right');
-  const eq=getEquipped();
-  drawPlayerSprite(player,{shirt:eq.shirt.color,pants:eq.pants.color,skin:'#ffd5a5',hat:eq.hat,label:'YOU',headband:'#ffd93d'});
-  drawBallOn(player);
-  drawPlayerSprite(cpu,{shirt:cpuOutfit.shirt,pants:cpuOutfit.shirt,skin:'#ffd5a5',hat:cpuOutfit.hat,label:'CPU',headband:'#ff6b6b'});
-  drawBallOn(cpu);
+  drawMatchScene(true, true, false);
 
-  // Overlay
   ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(0,0,W,H);
 
   const phase=Math.floor(countdownTimer/50);
@@ -1128,10 +1554,39 @@ function drawCountdown() {
     ctx.globalAlpha=1;
   }
 
-  // Difficulty label
   const dColors={'easy':'#06d6a0','medium':'#ffd93d','hard':'#e94560'};
   ctx.fillStyle=dColors[difficulty]; ctx.font='bold 18px monospace'; ctx.textAlign='center';
-  ctx.fillText(`${difficulty.toUpperCase()} MODE`,CENTER_X,H/2+80);
+  ctx.fillText(`${difficulty.toUpperCase()} MODE`,CENTER_X,H/2+78);
+  ctx.fillStyle='rgba(255,255,255,0.8)'; ctx.font='13px monospace';
+  ctx.fillText('Pause any time with P / Esc.', CENTER_X, H/2 + 110);
+}
+
+function drawPauseOverlay() {
+  clickAreas = [];
+  ctx.fillStyle='rgba(0,0,0,0.78)'; ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='#ffd93d'; ctx.font='bold 50px monospace'; ctx.textAlign='center';
+  ctx.fillText('PAUSED', CENTER_X, 110);
+  ctx.fillStyle='rgba(255,255,255,0.8)'; ctx.font='14px monospace';
+  ctx.fillText('Press P or Esc to jump back in.', CENTER_X, 138);
+
+  drawBtn(CENTER_X-250, 180, 150, 48, 'RESUME', '#06d6a0', '#000', 16);
+  addClick(CENTER_X-250, 180, 150, 48, () => togglePause());
+  drawBtn(CENTER_X-75, 180, 150, 48, 'HELP', '#4cc9f0', '#000', 16);
+  addClick(CENTER_X-75, 180, 150, 48, () => { gameState='help'; setSeenHelp(); });
+  drawBtn(CENTER_X+100, 180, 150, 48, 'MENU', '#9b5de5', '#fff', 16);
+  addClick(CENTER_X+100, 180, 150, 48, () => { clearTouchInputs(); gameState='menu'; });
+
+  drawToggleBtn(CENTER_X-180, 248, 150, save.settings.sound ? 'SFX ON' : 'SFX OFF', save.settings.sound, '#ffd93d');
+  addClick(CENTER_X-180, 248, 150, 30, () => toggleSound());
+  drawToggleBtn(CENTER_X+30, 248, 150, save.settings.showTouchControls ? 'TOUCH ON' : 'TOUCH OFF', save.settings.showTouchControls, '#4cc9f0');
+  addClick(CENTER_X+30, 248, 150, 30, () => toggleTouchControls());
+
+  drawInfoCard(CENTER_X-260, 310, 520, 150, 'QUICK REF', '#4cc9f0', [
+    'Hold SHOOT for grounded charge shots. Air tap SHOOT for quick jumpers.',
+    'Paint = 1 point, stripe = 2 points, deep = 3 points.',
+    'Three straight buckets lights you up and adds bonus coins.',
+    'Touch buttons only show on touch devices when the toggle is on.',
+  ]);
 }
 
 function drawGameOver() {
@@ -1140,40 +1595,49 @@ function drawGameOver() {
   const isW=winner==='player';
 
   ctx.fillStyle=isW?'#ffd93d':'#e94560'; ctx.font='bold 56px monospace'; ctx.textAlign='center';
-  ctx.fillText(isW?'YOU WIN!':'YOU LOSE!',CENTER_X,H/2-70);
+  ctx.fillText(isW?'YOU WIN!':'YOU LOSE!',CENTER_X,H/2-80);
   ctx.fillStyle='#fff'; ctx.font='bold 22px monospace';
-  ctx.fillText(`${player.score} - ${cpu.score}`,CENTER_X,H/2-30);
+  ctx.fillText(`${player.score} - ${cpu.score}`,CENTER_X,H/2-38);
 
-  if (coinsEarnedThisGame>0) {
-    ctx.fillStyle='#ffd93d'; ctx.font='bold 18px monospace';
-    ctx.fillText(`You earned ${coinsEarnedThisGame} coins!`,CENTER_X,H/2+5);
-  }
-  if (playerStreak >= 3) {
-    ctx.fillStyle='#ff6b00'; ctx.font='bold 14px monospace';
-    ctx.fillText(`Best streak this game: ${save.stats.bestStreak}`,CENTER_X,H/2+30);
-  }
+  ctx.fillStyle='#ffd93d'; ctx.font='bold 18px monospace';
+  ctx.fillText(`Coins this game: ${coinsEarnedThisGame}`,CENTER_X,H/2-4);
+  ctx.fillStyle='#4cc9f0'; ctx.font='bold 14px monospace';
+  ctx.fillText(`Lifetime coins: ${save.stats.totalCoinsEarned} | All-time best streak: ${save.stats.bestStreak}`,CENTER_X,H/2+26);
 
   ctx.font='14px monospace'; ctx.fillStyle=isW?'#06d6a0':'#4cc9f0';
-  ctx.fillText(isW?'Amazing game!':'Great try!',CENTER_X,H/2+55);
+  ctx.fillText(isW?'Amazing run! Queue up another one.' :'Great try. Tweak the loadout and run it back.',CENTER_X,H/2+54);
 
   const pulse=Math.sin(Date.now()/300)*0.15+0.85;
   ctx.globalAlpha=pulse;
-  drawBtn(CENTER_X-210,H/2+70,190,50,'PLAY AGAIN','#06d6a0','#000',18);
+  drawBtn(CENTER_X-210,H/2+78,190,50,'PLAY AGAIN','#06d6a0','#000',18);
   ctx.globalAlpha=1;
-  addClick(CENTER_X-210,H/2+70,190,50,()=>startGame());
+  addClick(CENTER_X-210,H/2+78,190,50,()=>startGame());
 
-  drawBtn(CENTER_X+20,H/2+70,90,50,'MENU','#4cc9f0','#000',16);
-  addClick(CENTER_X+20,H/2+70,90,50,()=>{ gameState='menu'; });
+  drawBtn(CENTER_X+20,H/2+78,90,50,'MENU','#4cc9f0','#000',16);
+  addClick(CENTER_X+20,H/2+78,90,50,()=>{ gameState='menu'; });
 
-  drawBtn(CENTER_X+130,H/2+70,90,50,'SHOP','#9b5de5','#fff',16);
-  addClick(CENTER_X+130,H/2+70,90,50,()=>{ gameState='shop'; shopTab='hats'; });
+  drawBtn(CENTER_X+130,H/2+78,90,50,'SHOP','#9b5de5','#fff',16);
+  addClick(CENTER_X+130,H/2+78,90,50,()=>{ gameState='shop'; shopTab='hats'; });
+
+  ctx.fillStyle='rgba(255,255,255,0.32)'; ctx.font='11px monospace'; ctx.textAlign='center';
+  ctx.fillText('Press Enter or Space to play again.', CENTER_X, H - 14);
 }
 
 // ==================== MAIN LOOP ====================
 function update() {
+  if (gameState === 'menu' || gameState === 'help') updateMenuTip();
+  if (gameState === 'paused') return;
   if (gameState==='countdown') {
+    const phase = Math.floor(countdownTimer / 50);
+    if (phase !== lastCountdownPhase && phase < 4) {
+      playSfx(phase === 3 ? 'go' : 'countdown');
+      lastCountdownPhase = phase;
+    }
     countdownTimer++;
-    if (countdownTimer >= 200) gameState='playing';
+    if (countdownTimer >= 200) {
+      gameState='playing';
+      lastCountdownPhase = -1;
+    }
     updateParticles();
     return;
   }
@@ -1188,35 +1652,39 @@ function update() {
 
 function draw() {
   if (gameState==='menu') { drawMenu(); return; }
+  if (gameState==='help') { drawHelp(); return; }
   if (gameState==='shop') { drawShop(); return; }
   if (gameState==='stats') { drawStats(); return; }
   if (gameState==='countdown') { drawCountdown(); return; }
+  if (gameState==='paused') {
+    drawMatchScene(true, false, false);
+    drawPauseOverlay();
+    return;
+  }
 
-  clickAreas=[];
-  ctx.save();
-  if (screenShake>0) ctx.translate((Math.random()-.5)*screenShake,(Math.random()-.5)*screenShake);
-
-  drawCourt(); drawHoop(HOOP_LEFT,'left'); drawHoop(HOOP_RIGHT,'right');
-  drawFreeBall();
-
-  const eq=getEquipped();
-  drawPlayerSprite(player,{shirt:eq.shirt.color,pants:eq.pants.color,skin:'#ffd5a5',hat:eq.hat,label:'YOU',headband:'#ffd93d'});
-  drawBallOn(player);
-  drawPlayerSprite(cpu,{shirt:cpuOutfit.shirt,pants:cpuOutfit.shirt,skin:'#ffd5a5',hat:cpuOutfit.hat,label:'CPU',headband:'#ff6b6b'});
-  drawBallOn(cpu);
-
-  drawPowerBar(); drawParticles(); drawFloats(); drawScoreboard();
-
-  ctx.fillStyle='rgba(255,255,255,0.25)'; ctx.font='11px monospace'; ctx.textAlign='center';
-  ctx.fillText('Arrow Keys: Move/Jump | Space: Charge & Shoot (mid-air too!) | Dunk near hoop!',CENTER_X,H-5);
-
-  ctx.restore();
+  drawMatchScene();
   if (gameState==='gameover') drawGameOver();
 }
 
 function gameLoop() { update(); draw(); requestAnimationFrame(gameLoop); }
 
 window.addEventListener('keydown',(e) => {
+  if ((gameState==='playing' || gameState==='countdown' || gameState==='paused') && (e.code==='KeyP' || e.code==='Escape') && !e.repeat) {
+    togglePause();
+    e.preventDefault();
+    return;
+  }
+  if (e.code==='KeyM' && !e.repeat) {
+    toggleSound();
+    e.preventDefault();
+    return;
+  }
+  if (e.code==='KeyH' && !e.repeat && (gameState==='menu' || gameState==='help')) {
+    if (gameState==='help') gameState='menu';
+    else { gameState='help'; setSeenHelp(); }
+    e.preventDefault();
+    return;
+  }
   if (gameState==='gameover'&&(e.code==='Enter'||e.code==='Space')) { startGame(); e.preventDefault(); }
   if (gameState==='menu'&&e.code==='Enter') startGame();
 });
