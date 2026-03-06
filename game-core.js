@@ -120,15 +120,29 @@ const isTouchDevice = window.matchMedia('(pointer: coarse)').matches || navigato
 const MENU_TIPS = [
   'Shoot from deep for 3, mid-range for 2, paint for 1.',
   'Tap HELP for scoring rules, specials, and controls.',
-  'Press P or Esc any time to pause. Press M to mute.',
+  'Press P or Esc any time to pause. Press M for sfx and N for music.',
   'Touch controls appear automatically on phones and tablets.',
 ];
 
 let audioCtx = null;
+let musicMasterGain = null;
 let menuTipTimer = 0;
 let menuTipIndex = 0;
 const virtualKeys = { ArrowLeft: false, ArrowRight: false, ArrowUp: false, Space: false };
 const activeTouchPointers = new Map();
+const MUSIC_PATTERNS = {
+  menu: {
+    tempo: 96,
+    bass: [196, null, 220, null, 174, null, 196, null],
+    lead: [392, 440, 523, 440, 392, 349, 392, 330],
+  },
+  game: {
+    tempo: 126,
+    bass: [147, null, 147, null, 165, null, 147, null],
+    lead: [440, null, 494, 523, 494, null, 440, 392],
+  },
+};
+const musicState = { mode: 'none', nextNoteTime: 0, step: 0 };
 
 function resizeCanvasDisplay() {
   const maxWidth = Math.max(320, window.innerWidth - 24);
@@ -144,12 +158,22 @@ function resizeCanvasDisplay() {
 }
 
 function ensureAudio() {
-  if (!save.settings.sound) return null;
+  if (!save.settings.sound && !save.settings.music) return null;
   const AudioCtor = window.AudioContext || window.webkitAudioContext;
   if (!AudioCtor) return null;
   if (!audioCtx) audioCtx = new AudioCtor();
-  if (audioCtx.state === 'suspended') audioCtx.resume();
+  if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
   return audioCtx;
+}
+
+function ensureMusicBus(audio) {
+  if (!musicMasterGain) {
+    musicMasterGain = audio.createGain();
+    musicMasterGain.gain.value = 0.0001;
+    musicMasterGain.connect(audio.destination);
+  }
+  musicMasterGain.gain.setTargetAtTime(save.settings.music ? 0.08 : 0.0001, audio.currentTime, 0.08);
+  return musicMasterGain;
 }
 
 function playTone(freq, duration, opts = {}) {
@@ -205,6 +229,71 @@ function playSfx(name) {
   }
 }
 
+function scheduleMusicNote(freq, duration, when, opts = {}) {
+  const audio = ensureAudio();
+  if (!audio || !freq) return;
+  const bus = ensureMusicBus(audio);
+  const osc = audio.createOscillator();
+  const gain = audio.createGain();
+  osc.type = opts.type || 'triangle';
+  osc.frequency.setValueAtTime(freq, when);
+  if (opts.slideTo) osc.frequency.linearRampToValueAtTime(opts.slideTo, when + duration);
+  gain.gain.setValueAtTime(0.0001, when);
+  gain.gain.exponentialRampToValueAtTime(opts.volume || 0.06, when + 0.015);
+  gain.gain.exponentialRampToValueAtTime(0.0001, when + duration);
+  osc.connect(gain);
+  gain.connect(bus);
+  osc.start(when);
+  osc.stop(when + duration + 0.02);
+}
+
+function getDesiredMusicMode() {
+  if (!save.settings.music) return 'none';
+  if (gameState === 'menu' || gameState === 'help' || gameState === 'shop' || gameState === 'stats') return 'menu';
+  if (gameState === 'countdown' || gameState === 'playing' || gameState === 'paused' || gameState === 'gameover') return 'game';
+  return 'none';
+}
+
+function scheduleMusicStep(mode, step, when) {
+  const pattern = MUSIC_PATTERNS[mode];
+  if (!pattern) return;
+  const bass = pattern.bass[step % pattern.bass.length];
+  const lead = pattern.lead[step % pattern.lead.length];
+  const stepDur = 60 / pattern.tempo / 2;
+  if (bass) scheduleMusicNote(bass, stepDur * 0.92, when, { type: 'triangle', volume: 0.06 });
+  if (lead) scheduleMusicNote(lead, stepDur * 0.65, when + 0.02, { type: mode === 'menu' ? 'sine' : 'square', volume: mode === 'menu' ? 0.035 : 0.028 });
+  if (mode === 'game' && step % 2 === 1) scheduleMusicNote(880, stepDur * 0.18, when + 0.01, { type: 'square', volume: 0.014, slideTo: 720 });
+}
+
+function resetMusicState(immediate = false) {
+  musicState.mode = 'none';
+  musicState.step = 0;
+  musicState.nextNoteTime = immediate && audioCtx ? audioCtx.currentTime + 0.03 : 0;
+}
+
+function updateMusic() {
+  const audio = ensureAudio();
+  if (!audio) return;
+  ensureMusicBus(audio);
+  const desiredMode = getDesiredMusicMode();
+  if (desiredMode === 'none') {
+    resetMusicState(true);
+    return;
+  }
+  if (musicState.mode !== desiredMode) {
+    musicState.mode = desiredMode;
+    musicState.step = 0;
+    musicState.nextNoteTime = audio.currentTime + 0.03;
+  }
+  const pattern = MUSIC_PATTERNS[desiredMode];
+  const stepDur = 60 / pattern.tempo / 2;
+  while (musicState.nextNoteTime < audio.currentTime + 0.22) {
+    scheduleMusicStep(desiredMode, musicState.step, musicState.nextNoteTime);
+    musicState.nextNoteTime += stepDur;
+    musicState.step++;
+  }
+}
+
 function clearTouchInputs() {
   activeTouchPointers.clear();
   Object.keys(virtualKeys).forEach(code => { virtualKeys[code] = false; });
@@ -252,6 +341,15 @@ function toggleSound() {
   save.settings.sound = !save.settings.sound;
   writeSave();
   if (save.settings.sound) playSfx('click');
+}
+
+function toggleMusic() {
+  save.settings.music = !save.settings.music;
+  const audio = audioCtx || ensureAudio();
+  if (audio) ensureMusicBus(audio);
+  writeSave();
+  resetMusicState(true);
+  if (save.settings.music) playTone(540, 0.08, { type: 'triangle', slideTo: 680, volume: 0.018 });
 }
 
 function toggleTouchControls() {
@@ -444,6 +542,15 @@ let scoreFlash = '';
 let scoreFlashTimer = 0;
 let resetTimer = 0;
 let whoGetsball = 'player';
+let hypeCallout = '';
+let hypeColor = '#fff';
+let hypeTimer = 0;
+
+function setHypeCallout(text, color = '#fff', duration = 90) {
+  hypeCallout = text;
+  hypeColor = color;
+  hypeTimer = duration;
+}
 
 function spawnParticles(x, y, color, count) {
   for (let i = 0; i < count; i++)

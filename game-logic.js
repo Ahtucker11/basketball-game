@@ -4,7 +4,7 @@
       coins: 0,
       owned: { hats: ['none'], balls: ['default'], shirts: ['blue'], pants: ['blue'] },
       equipped: { hat: 'none', ball: 'default', shirt: 'blue', pants: 'blue' },
-      settings: { sound: true, showTouchControls: true, seenHelp: false },
+      settings: { sound: true, music: true, showTouchControls: true, seenHelp: false },
       stats: {
         wins: 0,
         losses: 0,
@@ -47,6 +47,7 @@
       },
       settings: {
         sound: !source.settings || source.settings.sound !== false,
+        music: !source.settings || source.settings.music !== false,
         showTouchControls: !source.settings || source.settings.showTouchControls !== false,
         seenHelp: !!(source.settings && source.settings.seenHelp),
       },

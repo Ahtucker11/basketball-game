@@ -103,6 +103,19 @@
   - different shot consistency
 - Defense is less random and more context-aware near the rim and on charged shots
 
+### Phase 7 shipped
+
+- Added lightweight browser-native music for menu and match states
+- Added separate music and SFX controls
+- Added hype-callout presentation for:
+  - deep threes
+  - heat checks
+  - clutch scores
+  - comeback buckets
+  - poster dunks
+  - endgame finishes
+- Updated controls/help text so the new audio options are discoverable
+
 ## Execution goal for this pass
 
 Keep the repo simple and browser-native, but make the game feel like a much more finished arcade product without introducing a heavy framework or build step.

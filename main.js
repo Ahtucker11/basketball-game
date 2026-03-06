@@ -28,6 +28,7 @@ function update() {
   updatePlayer(); updateCPU(); updateBall(); updateParticles();
   if (screenShake>0) screenShake-=0.5;
   if (scoreFlashTimer>0) scoreFlashTimer--;
+  if (hypeTimer>0) hypeTimer--;
   if (crowdCheerTimer>0) crowdCheerTimer--;
 }
 
@@ -61,6 +62,7 @@ function gameLoop(timestamp) {
   }
   if (updatesThisFrame === MAX_UPDATES_PER_FRAME) accumulatorMs = 0;
 
+  updateMusic();
   draw();
   requestAnimationFrame(gameLoop);
 }
@@ -73,6 +75,11 @@ window.addEventListener('keydown',(e) => {
   }
   if (e.code==='KeyM' && !e.repeat) {
     toggleSound();
+    e.preventDefault();
+    return;
+  }
+  if (e.code==='KeyN' && !e.repeat) {
+    toggleMusic();
     e.preventDefault();
     return;
   }

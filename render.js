@@ -223,6 +223,23 @@ function drawScoreboard() {
   }
 }
 
+function drawHypeCallout() {
+  if (hypeTimer <= 0 || !hypeCallout) return;
+  const pulse = 1 + Math.sin(Date.now() / 90) * 0.08;
+  ctx.save();
+  ctx.globalAlpha = Math.min(1, hypeTimer / 25);
+  ctx.translate(CENTER_X, 154);
+  ctx.scale(pulse, pulse);
+  ctx.fillStyle = hypeColor;
+  ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+  ctx.lineWidth = 6;
+  ctx.font = 'bold 34px monospace';
+  ctx.textAlign = 'center';
+  ctx.strokeText(hypeCallout, 0, 0);
+  ctx.fillText(hypeCallout, 0, 0);
+  ctx.restore();
+}
+
 function drawParticles() {
   for (const p of particles) { ctx.globalAlpha=Math.max(0,p.life); ctx.fillStyle=p.color; ctx.fillRect(p.x-p.size/2,p.y-p.size/2,p.size,p.size); }
   ctx.globalAlpha=1;
@@ -281,10 +298,12 @@ function drawInfoCard(x, y, w, h, title, color, lines) {
 }
 
 function drawTopRightToggles() {
-  drawToggleBtn(W - 220, 18, 90, save.settings.sound ? 'SFX ON' : 'SFX OFF', save.settings.sound, '#ffd93d');
-  addClick(W - 220, 18, 90, 30, () => toggleSound());
-  drawToggleBtn(W - 118, 18, 98, save.settings.showTouchControls ? 'TOUCH ON' : 'TOUCH OFF', save.settings.showTouchControls, '#4cc9f0');
-  addClick(W - 118, 18, 98, 30, () => toggleTouchControls());
+  drawToggleBtn(W - 286, 18, 78, 'MUSIC', save.settings.music, '#9b5de5');
+  addClick(W - 286, 18, 78, 30, () => toggleMusic());
+  drawToggleBtn(W - 198, 18, 68, 'SFX', save.settings.sound, '#ffd93d');
+  addClick(W - 198, 18, 68, 30, () => toggleSound());
+  drawToggleBtn(W - 120, 18, 100, 'TOUCH', save.settings.showTouchControls, '#4cc9f0');
+  addClick(W - 120, 18, 100, 30, () => toggleTouchControls());
 }
 
 function drawTouchControls() {
@@ -322,13 +341,13 @@ function drawMatchScene(showHint = true, allowPause = true, allowShake = true) {
   drawPlayerSprite(cpu,{shirt:cpuOutfit.shirt,pants:cpuOutfit.shirt,skin:'#ffd5a5',hat:cpuOutfit.hat,label:'CPU',headband:'#ff6b6b'});
   drawBallOn(cpu);
 
-  drawPowerBar(); drawParticles(); drawFloats(); drawScoreboard();
+  drawPowerBar(); drawParticles(); drawFloats(); drawScoreboard(); drawHypeCallout();
   if (allowPause) drawPauseButton();
   drawTouchControls();
 
   if (showHint) {
     ctx.fillStyle = 'rgba(255,255,255,0.28)'; ctx.font = '11px monospace'; ctx.textAlign = 'center';
-    ctx.fillText('Arrows / touch to move and jump | Hold SHOOT to charge | P or Esc pause | M mute', CENTER_X, H - 5);
+    ctx.fillText('Arrows / touch move | Hold SHOOT charge | P/Esc pause | M sfx | N music', CENTER_X, H - 5);
   }
   ctx.restore();
 }
@@ -355,7 +374,7 @@ function drawMenu() {
   ctx.fillStyle='#e94560'; ctx.font='bold 32px monospace';
   ctx.fillText('FUN!',CENTER_X,95+tb);
   ctx.fillStyle='rgba(255,255,255,0.7)'; ctx.font='14px monospace';
-  ctx.fillText('Arcade one-on-one with streaks, shop rewards, pause, sound, and touch controls.', CENTER_X, 122);
+  ctx.fillText('Arcade one-on-one with music, hype callouts, streaks, shop rewards, and touch controls.', CENTER_X, 122);
 
   const eq=getEquipped();
   drawPreview(CENTER_X,205,1.6,eq.hat,eq.shirt.color,eq.pants.color);
@@ -409,7 +428,7 @@ function drawMenu() {
   addClick(CENTER_X+90,bY,180,bH,()=>startGame());
 
   ctx.fillStyle='rgba(255,255,255,0.3)'; ctx.font='11px monospace'; ctx.textAlign='center';
-  ctx.fillText('Arrows: move/jump | Space: charge/shoot | P/Esc: pause | M: mute | H: help',CENTER_X,H-10);
+  ctx.fillText('Arrows move | Space shoot | P pause | M sfx | N music | H help',CENTER_X,H-10);
 }
 
 function drawHelp() {
@@ -428,7 +447,7 @@ function drawHelp() {
   ctx.fillStyle = '#4cc9f0'; ctx.font = 'bold 34px monospace'; ctx.textAlign = 'center';
   ctx.fillText('HOW TO PLAY', CENTER_X, 56);
   ctx.fillStyle = 'rgba(255,255,255,0.72)'; ctx.font = '14px monospace';
-  ctx.fillText('One file. Full arcade loop. Now with pause, sound, cleaner stats, and touch controls.', CENTER_X, 82);
+  ctx.fillText('One file. Full arcade loop. Now with music, callouts, cleaner stats, and touch controls.', CENTER_X, 82);
 
   drawInfoCard(40, 110, 250, 178, 'CONTROLS', '#4cc9f0', [
     'Arrows / touch: move',
@@ -458,7 +477,7 @@ function drawHelp() {
   drawInfoCard(70, 318, 760, 172, 'QUICK START', '#e94560', [
     '1. Pick a target score and difficulty on the menu.',
     '2. Ground charge shots are safest. Jump shots are faster. Rise near the rim to dunk.',
-    '3. Pause with P or Esc if you need a break. Press M to mute instantly.',
+    '3. Pause with P or Esc if you need a break. Press M for sfx and N for music.',
     '4. On phones and tablets, left/right/jump/shoot buttons can appear automatically.',
     '5. Visit the shop between games, buy a new fit, and bring it into the next run.',
   ]);
@@ -624,16 +643,18 @@ function drawPauseOverlay() {
   drawBtn(CENTER_X+100, 180, 150, 48, 'MENU', '#9b5de5', '#fff', 16);
   addClick(CENTER_X+100, 180, 150, 48, () => { clearTouchInputs(); gameState='menu'; });
 
-  drawToggleBtn(CENTER_X-180, 248, 150, save.settings.sound ? 'SFX ON' : 'SFX OFF', save.settings.sound, '#ffd93d');
-  addClick(CENTER_X-180, 248, 150, 30, () => toggleSound());
-  drawToggleBtn(CENTER_X+30, 248, 150, save.settings.showTouchControls ? 'TOUCH ON' : 'TOUCH OFF', save.settings.showTouchControls, '#4cc9f0');
-  addClick(CENTER_X+30, 248, 150, 30, () => toggleTouchControls());
+  drawToggleBtn(CENTER_X-190, 248, 110, 'MUSIC', save.settings.music, '#9b5de5');
+  addClick(CENTER_X-190, 248, 110, 30, () => toggleMusic());
+  drawToggleBtn(CENTER_X-55, 248, 110, 'SFX', save.settings.sound, '#ffd93d');
+  addClick(CENTER_X-55, 248, 110, 30, () => toggleSound());
+  drawToggleBtn(CENTER_X+80, 248, 110, 'TOUCH', save.settings.showTouchControls, '#4cc9f0');
+  addClick(CENTER_X+80, 248, 110, 30, () => toggleTouchControls());
 
   drawInfoCard(CENTER_X-260, 310, 520, 150, 'QUICK REF', '#4cc9f0', [
     'Hold SHOOT for grounded charge shots. Air tap SHOOT for quick jumpers.',
     'Paint = 1 point, stripe = 2 points, deep = 3 points.',
     'Three straight buckets lights you up and adds bonus coins.',
-    'Touch buttons only show on touch devices when the toggle is on.',
+    'M toggles sfx. N toggles music. Touch buttons stay optional.',
   ]);
 }
 
@@ -655,6 +676,12 @@ function drawGameOver() {
   ctx.font='14px monospace'; ctx.fillStyle=isW?'#06d6a0':'#4cc9f0';
   ctx.fillText(isW?'Amazing run! Queue up another one.' :'Great try. Tweak the loadout and run it back.',CENTER_X,H/2+54);
 
+  if (hypeCallout) {
+    ctx.fillStyle = hypeColor;
+    ctx.font = 'bold 18px monospace';
+    ctx.fillText(hypeCallout, CENTER_X, H/2 + 82);
+  }
+
   const pulse=Math.sin(Date.now()/300)*0.15+0.85;
   ctx.globalAlpha=pulse;
   drawBtn(CENTER_X-210,H/2+78,190,50,'PLAY AGAIN','#06d6a0','#000',18);
@@ -668,5 +695,5 @@ function drawGameOver() {
   addClick(CENTER_X+130,H/2+78,90,50,()=>{ gameState='shop'; shopTab='hats'; });
 
   ctx.fillStyle='rgba(255,255,255,0.32)'; ctx.font='11px monospace'; ctx.textAlign='center';
-  ctx.fillText('Press Enter or Space to play again.', CENTER_X, H - 14);
+  ctx.fillText('Press Enter or Space to play again. M = sfx, N = music.', CENTER_X, H - 14);
 }

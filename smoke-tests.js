@@ -13,6 +13,7 @@ assert.equal(save.coins, 7);
 assert.deepEqual(save.owned.hats, ['cap']);
 assert.deepEqual(save.owned.balls, ['default']);
 assert.equal(save.settings.sound, false);
+assert.equal(save.settings.music, true);
 assert.equal(save.settings.showTouchControls, true);
 assert.equal(save.stats.gamesCompleted, 5);
 assert.equal(save.stats.gamesPlayed, 5);

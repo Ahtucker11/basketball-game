@@ -30,6 +30,30 @@ function chooseCpuOffensePlan(diff) {
   };
 }
 
+function chooseScoreCallout(scorer, outcome, previousScores) {
+  const lateGame = Math.max(previousScores.player, previousScores.cpu) >= winScore - 2;
+  const erasedDeficit = scorer === 'player'
+    ? previousScores.player + outcome.points >= previousScores.cpu && previousScores.player <= previousScores.cpu - 2
+    : previousScores.cpu + outcome.points >= previousScores.player && previousScores.cpu <= previousScores.player - 2;
+
+  if (outcome.winner) return scorer === 'player' ? { text: 'BALL GAME!', color: '#ffd93d' } : { text: 'CPU DAGGER!', color: '#ff6b6b' };
+  if (scorer === 'player') {
+    if (outcome.onFireActivated) return { text: 'HEAT CHECK!', color: '#ff6b00' };
+    if (lateGame && outcome.scores.player >= winScore - 1) return { text: 'CLUTCH!', color: '#ffd93d' };
+    if (outcome.points === 3 && erasedDeficit) return { text: 'COMEBACK 3!', color: '#4cc9f0' };
+    if (outcome.points === 3) return { text: 'DEEP 3!', color: '#4cc9f0' };
+    if (outcome.fireBonus) return { text: 'STAY HOT!', color: '#ff9f1c' };
+    if (outcome.points === 2) return { text: 'CASH!', color: '#80ffdb' };
+    return null;
+  }
+
+  if (outcome.onFireActivated) return { text: 'CPU HEATING UP!', color: '#e94560' };
+  if (lateGame && outcome.scores.cpu >= winScore - 1) return { text: 'CPU CLUTCH!', color: '#f72585' };
+  if (outcome.points === 3) return { text: 'CPU SPLASH!', color: '#f72585' };
+  if (erasedDeficit) return { text: 'CPU ANSWER!', color: '#ff6b6b' };
+  return null;
+}
+
 function togglePause() {
   if (gameState === 'playing' || gameState === 'countdown') {
     pausedFromState = gameState;
@@ -47,8 +71,10 @@ function finishGame(result) {
   gameState = 'gameover';
   save = GameLogic.recordGameResult(save, result);
   if (result === 'player') {
+    setHypeCallout('VICTORY!', '#ffd93d', 140);
     playSfx('win');
   } else {
+    setHypeCallout('HEARTBREAK!', '#ff6b6b', 140);
     playSfx('lose');
   }
   writeSave();
@@ -74,6 +100,8 @@ function startGame() {
   winner = '';
   particles = [];
   floatingTexts = [];
+  hypeCallout = '';
+  hypeTimer = 0;
   screenShake = 0;
   scoreFlash = '';
   scoreFlashTimer = 0;
@@ -149,6 +177,7 @@ function performDunk(dunker, hoop) {
   screenShake = 15;
   spawnConfetti(hoop.x, hoop.y);
   addFloat(hoop.x, hoop.y - 60, 'SLAM DUNK!', '#ff6b6b');
+  setHypeCallout(dunker === player ? 'POSTER!' : 'CPU HAMMER!', dunker === player ? '#ff6b6b' : '#f72585', 90);
   playSfx('dunk');
 }
 
@@ -178,6 +207,7 @@ function checkScore() {
   const rh = HOOP_RIGHT;
   if (ball.x > rh.rimLeft && ball.x < rh.rimRight && ball.y > rh.y - 5 && ball.y < rh.y + 15 && ball.vy > 0) {
     ball.scored = true;
+    const previousScores = { player: player.score, cpu: cpu.score };
     const outcome = GameLogic.applyScoringEvent({
       save,
       scorer: 'player',
@@ -206,6 +236,8 @@ function checkScore() {
     spawnConfetti(rh.x, rh.y); spawnCoinParticles(rh.x, rh.y - 30);
     addFloat(rh.x, rh.y - 50, `+${outcome.totalCoins} coin${outcome.totalCoins > 1 ? 's' : ''}`, '#ffd93d');
     if (outcome.fireBonus) addFloat(rh.x + 60, rh.y - 30, 'fire bonus!', '#ff6b00');
+    const callout = chooseScoreCallout('player', outcome, previousScores);
+    if (callout) setHypeCallout(callout.text, callout.color, 88);
     playSfx('score');
     whoGetsball = outcome.nextBallOwner; resetTimer = 90;
     if (outcome.winner) {
@@ -218,6 +250,7 @@ function checkScore() {
   const lh = HOOP_LEFT;
   if (ball.x > lh.rimLeft && ball.x < lh.rimRight && ball.y > lh.y - 5 && ball.y < lh.y + 15 && ball.vy > 0) {
     ball.scored = true;
+    const previousScores = { player: player.score, cpu: cpu.score };
     const outcome = GameLogic.applyScoringEvent({
       save,
       scorer: 'cpu',
@@ -241,6 +274,8 @@ function checkScore() {
     scoreFlash = outcome.scoreFlash; scoreFlashTimer = 60; screenShake = 8;
     crowdCheerTimer = 120;
     spawnConfetti(lh.x, lh.y);
+    const callout = chooseScoreCallout('cpu', outcome, previousScores);
+    if (callout) setHypeCallout(callout.text, callout.color, 88);
     playSfx('cpuScore');
     whoGetsball = outcome.nextBallOwner; resetTimer = 90;
     if (outcome.winner) {
