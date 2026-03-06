@@ -49,14 +49,25 @@
 ### Next technical phase
 
 - [x] Convert gameplay to a fixed timestep so speed and difficulty do not vary with FPS
-- [ ] Split the single-file script into state/update/render modules
-- [ ] Add a minimal automated smoke test harness for scoring, saves, and shop logic
+- [x] Split the single-file script into state/update/render files
+- [x] Add a minimal automated smoke test harness for scoring and save normalization
 
 ### Phase 2 shipped
 
 - Rendering still uses `requestAnimationFrame`
 - Gameplay updates now run through a fixed 60 Hz accumulator
 - Large frame gaps are clamped so tab switches or lag spikes do not fast-forward the entire match
+
+### Phase 3 shipped
+
+- The game is no longer trapped in one inline script
+- Browser code is now split into:
+  - `game-logic.js`
+  - `game-core.js`
+  - `gameplay.js`
+  - `render.js`
+  - `main.js`
+- Shared pure logic now has a small Node smoke test in `smoke-tests.js`
 
 ## Execution goal for this pass
 
