@@ -25,21 +25,21 @@ const DIFFICULTY = {
     blockChance: 0.005, defendAggro: 0.18, dunkChance: 0,
     driveChance: 0.18, deepChance: 0.12, shotWindow: 24, contestRadius: 36,
     relocateChance: 0.04, reboundLookAhead: 8, reboundJumpChance: 0.02,
-    helpJumpChance: 0.005, looseBallLookAhead: 8, missBias: 16,
+    helpJumpChance: 0.005, looseBallLookAhead: 8, missBias: 16, stealChance: 0.008,
   },
   medium: {
     speed: 2.95, shotMin: 46, shotRange: 34, shootDelay: 36, shootDelayRand: 34,
     blockChance: 0.035, defendAggro: 0.56, dunkChance: 0.008,
     driveChance: 0.34, deepChance: 0.2, shotWindow: 18, contestRadius: 48,
     relocateChance: 0.08, reboundLookAhead: 16, reboundJumpChance: 0.05,
-    helpJumpChance: 0.014, looseBallLookAhead: 16, missBias: 8,
+    helpJumpChance: 0.014, looseBallLookAhead: 16, missBias: 8, stealChance: 0.02,
   },
   hard: {
     speed: 3.75, shotMin: 60, shotRange: 20, shootDelay: 18, shootDelayRand: 18,
     blockChance: 0.09, defendAggro: 0.92, dunkChance: 0.03,
     driveChance: 0.52, deepChance: 0.28, shotWindow: 14, contestRadius: 62,
     relocateChance: 0.14, reboundLookAhead: 24, reboundJumpChance: 0.08,
-    helpJumpChance: 0.028, looseBallLookAhead: 24, missBias: 3,
+    helpJumpChance: 0.028, looseBallLookAhead: 24, missBias: 3, stealChance: 0.038,
   },
 };
 
@@ -216,6 +216,12 @@ function playSfx(name) {
   } else if (name === 'dunk') {
     playTone(120, 0.09, { type: 'square', slideTo: 90, volume: 0.03 });
     playTone(240, 0.08, { when: 0.04, type: 'sawtooth', slideTo: 160, volume: 0.02 });
+  } else if (name === 'perfect') {
+    playTone(760, 0.07, { type: 'triangle', slideTo: 920, volume: 0.02 });
+    playTone(1080, 0.1, { when: 0.03, type: 'triangle', volume: 0.016 });
+  } else if (name === 'steal') {
+    playTone(210, 0.06, { type: 'square', slideTo: 150, volume: 0.022 });
+    playTone(320, 0.08, { when: 0.03, type: 'square', slideTo: 220, volume: 0.016 });
   } else if (name === 'block') playTone(180, 0.07, { type: 'square', slideTo: 120, volume: 0.025 });
   else if (name === 'pause') playTone(400, 0.05, { type: 'square', slideTo: 320, volume: 0.016 });
   else if (name === 'resume') playTone(400, 0.05, { type: 'square', slideTo: 520, volume: 0.016 });
@@ -311,6 +317,7 @@ function getTouchButtons() {
   return [
     { code: 'ArrowLeft', x: 28, y: H - 106, w: 84, h: 64, label: 'LEFT' },
     { code: 'ArrowRight', x: 122, y: H - 106, w: 84, h: 64, label: 'RIGHT' },
+    { code: 'ArrowDown', x: CENTER_X - 46, y: H - 96, w: 92, h: 54, label: 'STEAL' },
     { code: 'ArrowUp', x: W - 206, y: H - 106, w: 84, h: 64, label: 'JUMP' },
     { code: 'Space', x: W - 112, y: H - 124, w: 92, h: 82, label: 'SHOOT' },
   ];
@@ -457,6 +464,7 @@ const player = {
   airFrames: 0, jumpShotFired: false,
 };
 let spaceWasDown = false;
+let downWasDown = false;
 
 const cpu = {
   x: CENTER_X + 100, y: FLOOR_Y, w: 36, h: 50, vx: 0, vy: 0,
@@ -464,6 +472,8 @@ const cpu = {
   facingRight: false, animFrame: 0, animTimer: 0, bounceY: 0,
   aiTimer: 0, shootTimer: 0, targetX: 0, plan: 'mid', planTimer: 0, contestCooldown: 0,
 };
+player.stealCooldown = 0;
+cpu.stealCooldown = 0;
 
 // ==================== CROWD ====================
 let crowd = [];

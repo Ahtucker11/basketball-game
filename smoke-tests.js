@@ -134,6 +134,14 @@ assert.equal(cpuFire.winner, 'cpu');
 assert.equal(cpuFire.nextBallOwner, 'player');
 assert.equal(cpuFire.scoreFlash, 'CPU +2!');
 
+const perfectRelease = GameLogic.getReleaseResult(66, 100);
+assert.equal(perfectRelease.perfect, true);
+assert.equal(perfectRelease.adjustedPower >= 68, true);
+const imperfectRelease = GameLogic.getReleaseResult(20, 100);
+assert.equal(imperfectRelease.perfect, false);
+assert.equal(GameLogic.isStealWindow(20, 18), true);
+assert.equal(GameLogic.isStealWindow(70, 18), false);
+
 const shopBase = GameLogic.normalizeSave({
   coins: 10,
   owned: { hats: ['none'], balls: ['default'], shirts: ['blue'], pants: ['blue'] },

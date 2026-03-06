@@ -193,6 +193,22 @@
     };
   }
 
+  function getReleaseResult(power, maxPower) {
+    const safeMax = Math.max(1, readNumber(maxPower, 100));
+    const clamped = Math.max(0, Math.min(safeMax, readNumber(power, 0)));
+    const normalized = clamped / safeMax;
+    const perfect = normalized >= 0.58 && normalized <= 0.74;
+    return {
+      normalized,
+      perfect,
+      adjustedPower: perfect ? Math.max(clamped, safeMax * 0.68) : clamped,
+    };
+  }
+
+  function isStealWindow(dx, dy, reachX = 46, reachY = 42) {
+    return Math.abs(dx) <= reachX && Math.abs(dy) <= reachY;
+  }
+
   const api = {
     createDefaultSave,
     validOwned,
@@ -204,6 +220,8 @@
     getEquipKeyForCategory,
     applyShopAction,
     applyScoringEvent,
+    getReleaseResult,
+    isStealWindow,
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

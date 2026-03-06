@@ -30,6 +30,45 @@ function chooseCpuOffensePlan(diff) {
   };
 }
 
+function attemptSteal(thief, target, who) {
+  if (!target.hasBall || thief.stealCooldown > 0) return false;
+  const dx = thief.x - target.x;
+  const dy = thief.y - target.y;
+  if (!GameLogic.isStealWindow(dx, dy)) {
+    thief.stealCooldown = Math.max(thief.stealCooldown, 12);
+    return false;
+  }
+
+  const guaranteed = Math.abs(dx) < 24;
+  const successChance = target.charging ? 0.62 : target.onGround ? 0.35 : 0.22;
+  thief.stealCooldown = 42;
+  if (!guaranteed && Math.random() > successChance) {
+    addFloat(thief.x, thief.y - thief.h - 18, who === 'player' ? 'REACH!' : 'POKE!', '#ffd166');
+    return false;
+  }
+
+  target.hasBall = false;
+  if (target === player) {
+    player.charging = false;
+    player.power = 0;
+  }
+  ball.owner = null;
+  ball.inAir = false;
+  ball.scored = false;
+  ball.bounceCount = 0;
+  ball.lastShooter = null;
+  ball.x = thief.x + (who === 'player' ? -10 : 10);
+  ball.y = thief.y - thief.h / 2;
+  ball.vx = who === 'player' ? -3.2 : 3.2;
+  ball.vy = -2.2;
+  screenShake = Math.max(screenShake, 7);
+  spawnParticles(ball.x, ball.y, who === 'player' ? '#80ffdb' : '#ff6b6b', 8);
+  addFloat(ball.x, ball.y - 20, who === 'player' ? 'STRIP!' : 'PICKED!', who === 'player' ? '#80ffdb' : '#ff6b6b');
+  setHypeCallout(who === 'player' ? 'LOCKDOWN!' : 'RIP AWAY!', who === 'player' ? '#80ffdb' : '#ff6b6b', 72);
+  playSfx('steal');
+  return true;
+}
+
 function chooseScoreCallout(scorer, outcome, previousScores) {
   const lateGame = Math.max(previousScores.player, previousScores.cpu) >= winScore - 2;
   const erasedDeficit = scorer === 'player'
@@ -132,8 +171,9 @@ function resetBall(giver) {
   }
   player.vx = 0; player.vy = 0; player.onGround = true; player.airFrames = 0; player.jumpShotFired = false;
   cpu.vx = 0; cpu.vy = 0; cpu.onGround = true; cpu.aiTimer = 0; cpu.shootTimer = 0;
-  player.charging = false; player.power = 0; spaceWasDown = false;
+  player.charging = false; player.power = 0; spaceWasDown = false; downWasDown = false;
   player.facingRight = true; cpu.facingRight = false; cpu.targetX = CENTER_X + 80; cpu.plan = 'mid'; cpu.planTimer = 0; cpu.contestCooldown = 0;
+  player.stealCooldown = 0; cpu.stealCooldown = 0;
   ball.x = ball.owner === 'player' ? player.x : cpu.x;
   ball.y = ball.owner === 'player' ? player.y - player.h - ball.radius : cpu.y - cpu.h - ball.radius;
 }
@@ -355,6 +395,7 @@ function updateBall() {
 }
 
 function updatePlayer() {
+  if (player.stealCooldown > 0) player.stealCooldown--;
   if (isPressed('ArrowLeft')) { player.vx = -player.speed; player.facingRight = false; }
   else if (isPressed('ArrowRight')) { player.vx = player.speed; player.facingRight = true; }
   else player.vx *= 0.7;
@@ -371,6 +412,10 @@ function updatePlayer() {
 
   const shootPressed = isPressed('Space');
   const spaceJustPressed = shootPressed && !spaceWasDown;
+  const stealPressed = isPressed('ArrowDown');
+  const stealJustPressed = stealPressed && !downWasDown;
+
+  if (stealJustPressed) attemptSteal(player, cpu, 'player');
 
   if (shootPressed && player.hasBall) {
     const dH = Math.abs(player.x - HOOP_RIGHT.x);
@@ -392,12 +437,21 @@ function updatePlayer() {
     }
   } else if (!shootPressed && player.charging) {
     // Release charged shot (works on ground or air if started charging on ground)
-    const shotPower = Math.max(player.power, 20);
+    const release = GameLogic.getReleaseResult(player.power, player.maxPower);
+    const shotPower = Math.max(release.adjustedPower, 20);
     shootBall(player, shotPower, HOOP_RIGHT);
+    if (release.perfect) {
+      addFloat(player.x, player.y - player.h - 28, 'PERFECT!', '#80ffdb');
+      setHypeCallout('GREEN LIGHT!', '#80ffdb', 76);
+      scoreFlash = 'PERFECT!';
+      scoreFlashTimer = 45;
+      playSfx('perfect');
+    }
     player.charging = false; player.power = 0;
   }
 
   spaceWasDown = shootPressed;
+  downWasDown = stealPressed;
 
   player.vy += GRAVITY; player.x += player.vx; player.y += player.vy;
   if (player.y > FLOOR_Y) { player.y = FLOOR_Y; player.vy = 0; player.onGround = true; }
@@ -415,6 +469,7 @@ function updatePlayer() {
 
 function updateCPU() {
   cpu.aiTimer++;
+  if (cpu.stealCooldown > 0) cpu.stealCooldown--;
   if (cpu.planTimer > 0) cpu.planTimer--;
   if (cpu.contestCooldown > 0) cpu.contestCooldown--;
   const diff = getDiff();
@@ -521,6 +576,10 @@ function updateCPU() {
     else cpu.vx *= 0.5;
 
     const contestingShot = player.charging || (!player.onGround && player.y < cpu.y - 12);
+    if (cpu.stealCooldown === 0 && player.onGround && Math.abs(cpu.x - player.x) < diff.contestRadius - 6) {
+      const stealPressure = player.charging ? diff.stealChance * 2.2 : diff.stealChance;
+      if (Math.random() < stealPressure) attemptSteal(cpu, player, 'cpu');
+    }
     if (cpu.onGround && cpu.contestCooldown === 0 && contestingShot) {
       const distToPlayer = Math.abs(cpu.x - player.x);
       const jumpChance = (rimThreat ? diff.helpJumpChance * 1.5 : diff.helpJumpChance) + (player.charging ? diff.blockChance * 0.35 : 0);

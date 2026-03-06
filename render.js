@@ -179,12 +179,16 @@ function drawPowerBar() {
   if (!player.charging) return;
   const bW=50,bH=8, bx=player.x-bW/2, by=player.y+player.bounceY-player.h-40;
   ctx.fillStyle='#333'; ctx.fillRect(bx-1,by-1,bW+2,bH+2);
+  ctx.fillStyle='rgba(255,255,255,0.16)';
+  ctx.fillRect(bx + bW * 0.58, by, bW * 0.16, bH);
   const g=ctx.createLinearGradient(bx,by,bx+bW,by);
   g.addColorStop(0,'#06d6a0'); g.addColorStop(0.5,'#ffd93d'); g.addColorStop(1,'#ef476f');
   ctx.fillStyle=g; ctx.fillRect(bx,by,bW*(player.power/player.maxPower),bH);
   ctx.strokeStyle='#fff'; ctx.lineWidth=1; ctx.strokeRect(bx-1,by-1,bW+2,bH+2);
   ctx.fillStyle='#fff'; ctx.font='bold 9px monospace'; ctx.textAlign='center';
   ctx.fillText('POWER',player.x,by-4);
+  ctx.fillStyle='#80ffdb'; ctx.font='bold 8px monospace';
+  ctx.fillText('GREEN', player.x, by + 18);
 }
 
 function drawScoreboard() {
@@ -214,6 +218,9 @@ function drawScoreboard() {
   if (playerStreak >= 2) {
     ctx.fillStyle = playerOnFire ? '#ff6b00' : '#fff';
     ctx.fillText(`${playerStreak} in a row${playerOnFire?' FIRE!':''}`,sX+sW+10,sY+34);
+  } else {
+    ctx.fillStyle = player.stealCooldown === 0 ? '#80ffdb' : 'rgba(255,255,255,0.45)';
+    ctx.fillText(player.stealCooldown === 0 ? 'Steal ready (Down)' : `Steal ${Math.ceil(player.stealCooldown / 6) / 10}s`, sX+sW+10, sY+34);
   }
 
   if (scoreFlashTimer>0) {
@@ -347,7 +354,7 @@ function drawMatchScene(showHint = true, allowPause = true, allowShake = true) {
 
   if (showHint) {
     ctx.fillStyle = 'rgba(255,255,255,0.28)'; ctx.font = '11px monospace'; ctx.textAlign = 'center';
-    ctx.fillText('Arrows / touch move | Hold SHOOT charge | P/Esc pause | M sfx | N music', CENTER_X, H - 5);
+    ctx.fillText('Arrows move | Down steal | Hold SHOOT for green release | P pause | M/N audio', CENTER_X, H - 5);
   }
   ctx.restore();
 }
@@ -374,7 +381,7 @@ function drawMenu() {
   ctx.fillStyle='#e94560'; ctx.font='bold 32px monospace';
   ctx.fillText('FUN!',CENTER_X,95+tb);
   ctx.fillStyle='rgba(255,255,255,0.7)'; ctx.font='14px monospace';
-  ctx.fillText('Arcade one-on-one with music, hype callouts, streaks, shop rewards, and touch controls.', CENTER_X, 122);
+  ctx.fillText('Arcade one-on-one with steals, green releases, music, hype callouts, and touch controls.', CENTER_X, 122);
 
   const eq=getEquipped();
   drawPreview(CENTER_X,205,1.6,eq.hat,eq.shirt.color,eq.pants.color);
@@ -428,7 +435,7 @@ function drawMenu() {
   addClick(CENTER_X+90,bY,180,bH,()=>startGame());
 
   ctx.fillStyle='rgba(255,255,255,0.3)'; ctx.font='11px monospace'; ctx.textAlign='center';
-  ctx.fillText('Arrows move | Space shoot | P pause | M sfx | N music | H help',CENTER_X,H-10);
+  ctx.fillText('Arrows move | Down steal | Space shoot | P pause | M sfx | N music | H help',CENTER_X,H-10);
 }
 
 function drawHelp() {
@@ -449,23 +456,25 @@ function drawHelp() {
   ctx.fillStyle = 'rgba(255,255,255,0.72)'; ctx.font = '14px monospace';
   ctx.fillText('One file. Full arcade loop. Now with music, callouts, cleaner stats, and touch controls.', CENTER_X, 82);
 
-  drawInfoCard(40, 110, 250, 178, 'CONTROLS', '#4cc9f0', [
+  drawInfoCard(40, 110, 250, 196, 'CONTROLS', '#4cc9f0', [
     'Arrows / touch: move',
     'Up / jump button: jump',
+    'Down / steal button: poke ball',
     'Hold Space / SHOOT: charge',
     'Release to fire',
     'Air tap SHOOT: jump shot',
     'Air + near rim: dunk',
   ]);
-  drawInfoCard(325, 110, 250, 178, 'SCORING', '#ffd93d', [
+  drawInfoCard(325, 110, 250, 196, 'SCORING', '#ffd93d', [
     'Paint finish: 1 point',
     'Mid-range stripe: 2 points',
     'Deep shot: 3 points',
+    'Hit the GREEN zone for a clean release',
     '3 straight buckets = ON FIRE',
     'Fire gives bonus coins',
     'First to target score wins',
   ]);
-  drawInfoCard(610, 110, 250, 178, 'PROGRESSION', '#06d6a0', [
+  drawInfoCard(610, 110, 250, 196, 'PROGRESSION', '#06d6a0', [
     'Every bucket earns coins',
     'Coins unlock cosmetics',
     'Shop purchases persist',
@@ -476,10 +485,11 @@ function drawHelp() {
 
   drawInfoCard(70, 318, 760, 172, 'QUICK START', '#e94560', [
     '1. Pick a target score and difficulty on the menu.',
-    '2. Ground charge shots are safest. Jump shots are faster. Rise near the rim to dunk.',
-    '3. Pause with P or Esc if you need a break. Press M for sfx and N for music.',
-    '4. On phones and tablets, left/right/jump/shoot buttons can appear automatically.',
-    '5. Visit the shop between games, buy a new fit, and bring it into the next run.',
+    '2. Ground charge shots are safest. Release inside the GREEN zone for cleaner shots.',
+    '3. Use Down to poke the ball loose when the CPU is crowding with possession.',
+    '4. Pause with P or Esc if you need a break. Press M for sfx and N for music.',
+    '5. On phones and tablets, left/right/jump/steal/shoot buttons can appear automatically.',
+    '6. Visit the shop between games, buy a new fit, and bring it into the next run.',
   ]);
 
   ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.font = '11px monospace'; ctx.textAlign = 'center';
@@ -651,9 +661,9 @@ function drawPauseOverlay() {
   addClick(CENTER_X+80, 248, 110, 30, () => toggleTouchControls());
 
   drawInfoCard(CENTER_X-260, 310, 520, 150, 'QUICK REF', '#4cc9f0', [
-    'Hold SHOOT for grounded charge shots. Air tap SHOOT for quick jumpers.',
+    'Hold SHOOT for grounded charge shots. Release in GREEN for a cleaner shot.',
+    'Tap Down to swipe at the ball when the ball-handler crowds you.',
     'Paint = 1 point, stripe = 2 points, deep = 3 points.',
-    'Three straight buckets lights you up and adds bonus coins.',
     'M toggles sfx. N toggles music. Touch buttons stay optional.',
   ]);
 }

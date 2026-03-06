@@ -116,6 +116,16 @@
   - endgame finishes
 - Updated controls/help text so the new audio options are discoverable
 
+### Phase 8 shipped
+
+- Added a steal mechanic on `ArrowDown` / touch
+- Added a visible GREEN release zone on charged shots
+- Perfect releases now get stronger presentation and cleaner shot power
+- HUD/help text now teaches:
+  - steals
+  - green releases
+  - updated touch controls
+
 ## Execution goal for this pass
 
 Keep the repo simple and browser-native, but make the game feel like a much more finished arcade product without introducing a heavy framework or build step.
