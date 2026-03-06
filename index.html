@@ -1624,6 +1624,12 @@ function drawGameOver() {
 }
 
 // ==================== MAIN LOOP ====================
+const FIXED_STEP_MS = 1000 / 60;
+const MAX_FRAME_MS = 250;
+const MAX_UPDATES_PER_FRAME = 8;
+let lastFrameTime = 0;
+let accumulatorMs = 0;
+
 function update() {
   if (gameState === 'menu' || gameState === 'help') updateMenuTip();
   if (gameState === 'paused') return;
@@ -1666,7 +1672,23 @@ function draw() {
   if (gameState==='gameover') drawGameOver();
 }
 
-function gameLoop() { update(); draw(); requestAnimationFrame(gameLoop); }
+function gameLoop(timestamp) {
+  if (!lastFrameTime) lastFrameTime = timestamp;
+  const frameTime = Math.min(timestamp - lastFrameTime, MAX_FRAME_MS);
+  lastFrameTime = timestamp;
+  accumulatorMs += frameTime;
+
+  let updatesThisFrame = 0;
+  while (accumulatorMs >= FIXED_STEP_MS && updatesThisFrame < MAX_UPDATES_PER_FRAME) {
+    update();
+    accumulatorMs -= FIXED_STEP_MS;
+    updatesThisFrame++;
+  }
+  if (updatesThisFrame === MAX_UPDATES_PER_FRAME) accumulatorMs = 0;
+
+  draw();
+  requestAnimationFrame(gameLoop);
+}
 
 window.addEventListener('keydown',(e) => {
   if ((gameState==='playing' || gameState==='countdown' || gameState==='paused') && (e.code==='KeyP' || e.code==='Escape') && !e.repeat) {
@@ -1690,7 +1712,7 @@ window.addEventListener('keydown',(e) => {
 });
 
 generateCrowd();
-gameLoop();
+requestAnimationFrame(gameLoop);
 </script>
 </body>
 </html>

@@ -48,9 +48,15 @@
 
 ### Next technical phase
 
-- [ ] Convert gameplay to a fixed timestep so speed and difficulty do not vary with FPS
+- [x] Convert gameplay to a fixed timestep so speed and difficulty do not vary with FPS
 - [ ] Split the single-file script into state/update/render modules
 - [ ] Add a minimal automated smoke test harness for scoring, saves, and shop logic
+
+### Phase 2 shipped
+
+- Rendering still uses `requestAnimationFrame`
+- Gameplay updates now run through a fixed 60 Hz accumulator
+- Large frame gaps are clamped so tab switches or lag spikes do not fast-forward the entire match
 
 ## Execution goal for this pass
 
