@@ -123,6 +123,75 @@
     return { save: next, action: 'purchase', changed: true };
   }
 
+  function applyScoringEvent(config) {
+    const nextSave = cloneSave(config.save);
+    const scorer = config.scorer;
+    const points = getPointValueForShotX(
+      config.shotX,
+      scorer === 'player' ? 'right' : 'left',
+      config.zones
+    );
+    const scores = {
+      player: readNumber(config.scores && config.scores.player, 0),
+      cpu: readNumber(config.scores && config.scores.cpu, 0),
+    };
+    const streaks = {
+      player: readNumber(config.streaks && config.streaks.player, 0),
+      cpu: readNumber(config.streaks && config.streaks.cpu, 0),
+    };
+    const onFire = {
+      player: !!(config.onFire && config.onFire.player),
+      cpu: !!(config.onFire && config.onFire.cpu),
+    };
+    let onFireActivated = false;
+    let fireBonus = 0;
+    let totalCoins = 0;
+
+    if (scorer === 'player') {
+      scores.player += points;
+      streaks.player++;
+      streaks.cpu = 0;
+      onFire.cpu = false;
+      if (streaks.player >= 3 && !onFire.player) {
+        onFire.player = true;
+        onFireActivated = true;
+      }
+      fireBonus = onFire.player ? 1 : 0;
+      totalCoins = points + fireBonus;
+      nextSave.coins += totalCoins;
+      nextSave.stats.totalCoinsEarned += totalCoins;
+      nextSave.stats.totalPoints += points;
+      nextSave.stats.bestStreak = Math.max(nextSave.stats.bestStreak, streaks.player);
+    } else {
+      scores.cpu += points;
+      streaks.cpu++;
+      streaks.player = 0;
+      onFire.player = false;
+      if (streaks.cpu >= 3 && !onFire.cpu) {
+        onFire.cpu = true;
+        onFireActivated = true;
+      }
+    }
+
+    let winner = null;
+    if (scores.player >= readNumber(config.winScore, 0)) winner = 'player';
+    else if (scores.cpu >= readNumber(config.winScore, 0)) winner = 'cpu';
+
+    return {
+      save: nextSave,
+      scores,
+      streaks,
+      onFire,
+      points,
+      fireBonus,
+      totalCoins,
+      winner,
+      onFireActivated,
+      nextBallOwner: scorer === 'player' ? 'cpu' : 'player',
+      scoreFlash: scorer === 'player' ? `+${points}!` : `CPU +${points}!`,
+    };
+  }
+
   const api = {
     createDefaultSave,
     validOwned,
@@ -133,6 +202,7 @@
     recordGameResult,
     getEquipKeyForCategory,
     applyShopAction,
+    applyScoringEvent,
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

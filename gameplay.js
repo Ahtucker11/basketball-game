@@ -138,35 +138,49 @@ function getPointValue(sx, hoop) {
 
 function checkScore() {
   if (ball.scored) return;
+  const zones = {
+    twoLeft: TWO_PT_LEFT,
+    threeLeft: THREE_PT_LEFT,
+    twoRight: TWO_PT_RIGHT,
+    threeRight: THREE_PT_RIGHT,
+  };
 
   // Right hoop (player)
   const rh = HOOP_RIGHT;
   if (ball.x > rh.rimLeft && ball.x < rh.rimRight && ball.y > rh.y - 5 && ball.y < rh.y + 15 && ball.vy > 0) {
     ball.scored = true;
-    const pts = getPointValue(ball.lastShootX || ball.x, HOOP_RIGHT);
-    player.score += pts;
-    playerStreak++; cpuStreak = 0; cpuOnFire = false;
-    if (playerStreak >= 3 && !playerOnFire) {
-      playerOnFire = true;
+    const outcome = GameLogic.applyScoringEvent({
+      save,
+      scorer: 'player',
+      shotX: ball.lastShootX || ball.x,
+      zones,
+      scores: { player: player.score, cpu: cpu.score },
+      streaks: { player: playerStreak, cpu: cpuStreak },
+      onFire: { player: playerOnFire, cpu: cpuOnFire },
+      winScore,
+    });
+    save = outcome.save;
+    player.score = outcome.scores.player;
+    cpu.score = outcome.scores.cpu;
+    playerStreak = outcome.streaks.player;
+    cpuStreak = outcome.streaks.cpu;
+    playerOnFire = outcome.onFire.player;
+    cpuOnFire = outcome.onFire.cpu;
+    if (outcome.onFireActivated) {
       addFloat(CENTER_X, 180, 'ON FIRE!', '#ff6b00');
       screenShake = 12;
     }
-    const fireBonus = playerOnFire ? 1 : 0;
-    const totalCoins = pts + fireBonus;
-    save.coins += totalCoins; coinsEarnedThisGame += totalCoins;
-    save.stats.totalCoinsEarned += totalCoins;
-    save.stats.totalPoints += pts;
-    if (playerStreak > save.stats.bestStreak) save.stats.bestStreak = playerStreak;
+    coinsEarnedThisGame += outcome.totalCoins;
     writeSave();
-    scoreFlash = `+${pts}!`; scoreFlashTimer = 60; screenShake = Math.max(screenShake, 10);
+    scoreFlash = outcome.scoreFlash; scoreFlashTimer = 60; screenShake = Math.max(screenShake, 10);
     crowdCheerTimer = 120;
     spawnConfetti(rh.x, rh.y); spawnCoinParticles(rh.x, rh.y - 30);
-    addFloat(rh.x, rh.y - 50, `+${totalCoins} coin${totalCoins > 1 ? 's' : ''}`, '#ffd93d');
-    if (fireBonus) addFloat(rh.x + 60, rh.y - 30, 'fire bonus!', '#ff6b00');
+    addFloat(rh.x, rh.y - 50, `+${outcome.totalCoins} coin${outcome.totalCoins > 1 ? 's' : ''}`, '#ffd93d');
+    if (outcome.fireBonus) addFloat(rh.x + 60, rh.y - 30, 'fire bonus!', '#ff6b00');
     playSfx('score');
-    whoGetsball = 'cpu'; resetTimer = 90;
-    if (player.score >= winScore) {
-      finishGame('player');
+    whoGetsball = outcome.nextBallOwner; resetTimer = 90;
+    if (outcome.winner) {
+      finishGame(outcome.winner);
       spawnConfetti(W/2, H/2); spawnConfetti(W/2-100, H/2); spawnConfetti(W/2+100, H/2);
     }
   }
@@ -175,20 +189,33 @@ function checkScore() {
   const lh = HOOP_LEFT;
   if (ball.x > lh.rimLeft && ball.x < lh.rimRight && ball.y > lh.y - 5 && ball.y < lh.y + 15 && ball.vy > 0) {
     ball.scored = true;
-    const pts = getPointValue(ball.lastShootX || ball.x, HOOP_LEFT);
-    cpu.score += pts;
-    cpuStreak++; playerStreak = 0; playerOnFire = false;
-    if (cpuStreak >= 3 && !cpuOnFire) {
-      cpuOnFire = true;
+    const outcome = GameLogic.applyScoringEvent({
+      save,
+      scorer: 'cpu',
+      shotX: ball.lastShootX || ball.x,
+      zones,
+      scores: { player: player.score, cpu: cpu.score },
+      streaks: { player: playerStreak, cpu: cpuStreak },
+      onFire: { player: playerOnFire, cpu: cpuOnFire },
+      winScore,
+    });
+    save = outcome.save;
+    player.score = outcome.scores.player;
+    cpu.score = outcome.scores.cpu;
+    playerStreak = outcome.streaks.player;
+    cpuStreak = outcome.streaks.cpu;
+    playerOnFire = outcome.onFire.player;
+    cpuOnFire = outcome.onFire.cpu;
+    if (outcome.onFireActivated) {
       addFloat(CENTER_X, 180, 'CPU ON FIRE!', '#ff6b00');
     }
-    scoreFlash = `CPU +${pts}!`; scoreFlashTimer = 60; screenShake = 8;
+    scoreFlash = outcome.scoreFlash; scoreFlashTimer = 60; screenShake = 8;
     crowdCheerTimer = 120;
     spawnConfetti(lh.x, lh.y);
     playSfx('cpuScore');
-    whoGetsball = 'player'; resetTimer = 90;
-    if (cpu.score >= winScore) {
-      finishGame('cpu');
+    whoGetsball = outcome.nextBallOwner; resetTimer = 90;
+    if (outcome.winner) {
+      finishGame(outcome.winner);
     }
   }
 }

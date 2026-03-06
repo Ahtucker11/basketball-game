@@ -81,6 +81,17 @@
   - game start / game result stat transitions
   - shop purchase, equip, noop, and insufficient-funds paths
 
+### Phase 5 shipped
+
+- Live scoring rules now live in shared pure logic:
+  - points by shot distance
+  - streak updates
+  - on-fire activation
+  - player coin rewards and bonuses
+  - winner detection
+  - next-possession ownership
+- Smoke tests now cover scoring outcomes for both player and CPU paths
+
 ## Execution goal for this pass
 
 Keep the repo simple and browser-native, but make the game feel like a much more finished arcade product without introducing a heavy framework or build step.

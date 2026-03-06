@@ -35,30 +35,103 @@ assert.equal(cpuWin.stats.gamesCompleted, 6);
 assert.equal(cpuWin.stats.losses, 1);
 assert.equal(cpuWin.stats.wins, 3);
 
+const scoreZones = { twoRight: 710, threeRight: 620, twoLeft: 190, threeLeft: 280 };
+
 assert.equal(
-  GameLogic.getPointValueForShotX(850, 'right', { twoRight: 710, threeRight: 620, twoLeft: 190, threeLeft: 280 }),
+  GameLogic.getPointValueForShotX(850, 'right', scoreZones),
   1
 );
 assert.equal(
-  GameLogic.getPointValueForShotX(680, 'right', { twoRight: 710, threeRight: 620, twoLeft: 190, threeLeft: 280 }),
+  GameLogic.getPointValueForShotX(680, 'right', scoreZones),
   2
 );
 assert.equal(
-  GameLogic.getPointValueForShotX(500, 'right', { twoRight: 710, threeRight: 620, twoLeft: 190, threeLeft: 280 }),
+  GameLogic.getPointValueForShotX(500, 'right', scoreZones),
   3
 );
 assert.equal(
-  GameLogic.getPointValueForShotX(120, 'left', { twoRight: 710, threeRight: 620, twoLeft: 190, threeLeft: 280 }),
+  GameLogic.getPointValueForShotX(120, 'left', scoreZones),
   1
 );
 assert.equal(
-  GameLogic.getPointValueForShotX(240, 'left', { twoRight: 710, threeRight: 620, twoLeft: 190, threeLeft: 280 }),
+  GameLogic.getPointValueForShotX(240, 'left', scoreZones),
   2
 );
 assert.equal(
-  GameLogic.getPointValueForShotX(360, 'left', { twoRight: 710, threeRight: 620, twoLeft: 190, threeLeft: 280 }),
+  GameLogic.getPointValueForShotX(360, 'left', scoreZones),
   3
 );
+
+const scoringBase = GameLogic.normalizeSave({});
+const playerFire = GameLogic.applyScoringEvent({
+  save: scoringBase,
+  scorer: 'player',
+  shotX: 500,
+  zones: scoreZones,
+  scores: { player: 0, cpu: 0 },
+  streaks: { player: 2, cpu: 1 },
+  onFire: { player: false, cpu: true },
+  winScore: 5,
+});
+assert.equal(playerFire.points, 3);
+assert.equal(playerFire.scores.player, 3);
+assert.equal(playerFire.streaks.player, 3);
+assert.equal(playerFire.streaks.cpu, 0);
+assert.equal(playerFire.onFire.player, true);
+assert.equal(playerFire.onFire.cpu, false);
+assert.equal(playerFire.onFireActivated, true);
+assert.equal(playerFire.fireBonus, 1);
+assert.equal(playerFire.totalCoins, 4);
+assert.equal(playerFire.save.coins, 4);
+assert.equal(playerFire.save.stats.totalPoints, 3);
+assert.equal(playerFire.save.stats.totalCoinsEarned, 4);
+assert.equal(playerFire.save.stats.bestStreak, 3);
+assert.equal(playerFire.nextBallOwner, 'cpu');
+assert.equal(playerFire.winner, null);
+assert.equal(playerFire.scoreFlash, '+3!');
+
+const playerWinScore = GameLogic.applyScoringEvent({
+  save: playerFire.save,
+  scorer: 'player',
+  shotX: 850,
+  zones: scoreZones,
+  scores: playerFire.scores,
+  streaks: playerFire.streaks,
+  onFire: playerFire.onFire,
+  winScore: 4,
+});
+assert.equal(playerWinScore.points, 1);
+assert.equal(playerWinScore.fireBonus, 1);
+assert.equal(playerWinScore.totalCoins, 2);
+assert.equal(playerWinScore.scores.player, 4);
+assert.equal(playerWinScore.streaks.player, 4);
+assert.equal(playerWinScore.save.coins, 6);
+assert.equal(playerWinScore.save.stats.totalPoints, 4);
+assert.equal(playerWinScore.save.stats.bestStreak, 4);
+assert.equal(playerWinScore.winner, 'player');
+
+const cpuFire = GameLogic.applyScoringEvent({
+  save: scoringBase,
+  scorer: 'cpu',
+  shotX: 240,
+  zones: scoreZones,
+  scores: { player: 2, cpu: 1 },
+  streaks: { player: 2, cpu: 2 },
+  onFire: { player: true, cpu: false },
+  winScore: 3,
+});
+assert.equal(cpuFire.points, 2);
+assert.equal(cpuFire.scores.cpu, 3);
+assert.equal(cpuFire.streaks.cpu, 3);
+assert.equal(cpuFire.streaks.player, 0);
+assert.equal(cpuFire.onFire.cpu, true);
+assert.equal(cpuFire.onFire.player, false);
+assert.equal(cpuFire.onFireActivated, true);
+assert.equal(cpuFire.totalCoins, 0);
+assert.equal(cpuFire.save.coins, 0);
+assert.equal(cpuFire.winner, 'cpu');
+assert.equal(cpuFire.nextBallOwner, 'player');
+assert.equal(cpuFire.scoreFlash, 'CPU +2!');
 
 const shopBase = GameLogic.normalizeSave({
   coins: 10,
